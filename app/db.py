@@ -227,6 +227,10 @@ def get_connection():
 
 def init_db():
     init_schema(LOCAL_DB_PATH)
+    active_path = get_active_db_path()
+    if active_path != LOCAL_DB_PATH:
+        init_schema(active_path)
+
     with get_connection() as conn:
         cursor = conn.cursor()
         
