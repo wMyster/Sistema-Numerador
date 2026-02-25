@@ -1,0 +1,22 @@
+# Banco de Dados e Backups
+data/
+backup/
+*.sqlite
+*.db
+
+# Documentos do Word (Templates e Originais)
+Numeradores/
+*.docx
+
+# Interpretador Python Portátil (Muito pesado para o GitHub)
+runtime/
+
+# Cache do Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# SO
+.DS_Store
+Thumbs.db
