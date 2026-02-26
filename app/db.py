@@ -2,6 +2,7 @@ import sqlite3
 import os
 import shutil
 import glob
+import hashlib
 from datetime import datetime
 import docx
 
@@ -298,6 +299,17 @@ def delete_usuario(nome):
     sincronizar_bancos()
 
 # --- REGISTROS GERAIS ---
+def get_file_hash(filepath):
+    """Gera um hash MD5 do arquivo para verificar se houve alteracao binaria"""
+    hasher = hashlib.md5()
+    try:
+        with open(filepath, 'rb') as f:
+            while chunk := f.read(8192):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+    except:
+        return None
+
 def get_proximo_numero(tipo):
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -332,11 +344,30 @@ def fazer_backup():
     db_ativo = get_active_db_path()
     try:
         if os.path.exists(db_ativo):
+            
+            # --- INTELIGENCIA DE HASH (EVITAR CLONES IDENTICOS) ---
+            # Identifica qual foi o ULTIMO backup criado na pasta alvo
+            ultimo_backup_hash = None
+            try:
+                todos_backups = glob.glob(os.path.join(backup_folder, "numerador_backup_*.sqlite"))
+                if todos_backups:
+                    todos_backups.sort(key=os.path.getmtime, reverse=True)
+                    ultimo_backup = todos_backups[0]
+                    ultimo_backup_hash = get_file_hash(ultimo_backup)
+            except: pass
+            
+            db_ativo_hash = get_file_hash(db_ativo)
+            
+            # Subtrai a necessidade de copiar se os conteudos forem identicos 
+            # (Ex: Usuario esqueceu atestado na hora do almoco e nao ocorreu lancamentos no BD)
+            if ultimo_backup_hash and db_ativo_hash and (ultimo_backup_hash == db_ativo_hash):
+                return None
+            
+            # Se for diferente (houve insercao/delete) entao copiamos!
             shutil.copy2(db_ativo, backup_file)
             
             # Rotina de Limpeza (Mantem apenas os 20 mais recentes na pasta)
             try:
-                # Pega todos os backups, ordena por data de modificacao, reverso (mais novo no indice 0)
                 todos_backups = glob.glob(os.path.join(backup_folder, "numerador_backup_*.sqlite"))
                 todos_backups.sort(key=os.path.getmtime, reverse=True)
                 
