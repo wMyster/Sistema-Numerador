@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import shutil
+import glob
 from datetime import datetime
 import docx
 
@@ -306,14 +307,23 @@ def get_proximo_numero(tipo):
 
 def fazer_backup():
     rede_ok = os.path.exists(r"G:\\")
+    local_backup_folder = os.path.join(DATA_DIR, "BACKUPS")
     if rede_ok:
         backup_folder = os.path.join(r"G:\NUMERADORES DADOS", "BACKUPS")
     else:
-        backup_folder = os.path.join(DATA_DIR, "BACKUPS")
+        backup_folder = local_backup_folder
         
     if not os.path.exists(backup_folder):
         try: os.makedirs(backup_folder)
         except: return None
+        
+    # Se a rede voltou e decidimos usar ela, vamos mover os backups locais
+    # antigos que ficaram órfãos no pendrive para o G:\
+    if rede_ok and os.path.exists(local_backup_folder):
+        for of_file in glob.glob(os.path.join(local_backup_folder, "*.sqlite")):
+            try:
+                shutil.move(of_file, backup_folder)
+            except: pass
         
     agora = datetime.now()
     nome_backup = f'numerador_backup_{agora.strftime("%Y_%m_%d_%H%M%S")}.sqlite'
@@ -323,6 +333,20 @@ def fazer_backup():
     try:
         if os.path.exists(db_ativo):
             shutil.copy2(db_ativo, backup_file)
+            
+            # Rotina de Limpeza (Mantem apenas os 20 mais recentes na pasta)
+            try:
+                # Pega todos os backups, ordena por data de modificacao, reverso (mais novo no indice 0)
+                todos_backups = glob.glob(os.path.join(backup_folder, "numerador_backup_*.sqlite"))
+                todos_backups.sort(key=os.path.getmtime, reverse=True)
+                
+                if len(todos_backups) > 20:
+                    excedentes = todos_backups[20:]
+                    for lixo in excedentes:
+                        os.remove(lixo)
+            except:
+                pass
+                
             return backup_file
     except:
         pass
