@@ -1,4 +1,5 @@
 import os
+import tempfile
 import db
 from docx import Document
 from docx.shared import Pt, Inches
@@ -99,11 +100,10 @@ def exportar_para_docx(tipo):
     return file_path
 
 def exportar_unico_docx(tipo, numero, placa, data, assunto, destino, obs, usuario):
-    if not os.path.exists(OUTPUT_DIR):
-        os.makedirs(OUTPUT_DIR)
+    temp_dir = tempfile.gettempdir()
         
     nome_label = NOME_UNICO.get(tipo, tipo.capitalize())
-    file_path = os.path.join(OUTPUT_DIR, f'{nome_label}_{numero:03d}_2026.docx')
+    file_path = os.path.join(temp_dir, f'{nome_label}_{numero:03d}_2026.docx')
     doc = Document()
     
     titulo_cabecalho = f'{nome_label.upper()} Nº {numero:03d} / 2026'
