@@ -307,7 +307,7 @@ def get_proximo_numero(tipo):
 
 def fazer_backup():
     rede_ok = os.path.exists(r"G:\\")
-    local_backup_folder = os.path.join(DATA_DIR, "BACKUPS")
+    local_backup_folder = BACKUP_DIR
     if rede_ok:
         backup_folder = os.path.join(r"G:\NUMERADORES DADOS", "BACKUPS")
     else:
