@@ -350,7 +350,7 @@ class TabNumerador(ttk.Frame):
 
     def action_abrir_pasta(self):
         try:
-            pasta = export_docx.OUTPUT_DIR
+            pasta = export_docx.get_active_output_dir()
             if not os.path.exists(pasta):
                 os.makedirs(pasta)
             os.startfile(pasta)

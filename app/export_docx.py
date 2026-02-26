@@ -28,11 +28,21 @@ NOME_UNICO = {
     "CERTIDAO": "Certidão"
 }
 
-def exportar_para_docx(tipo):
+def get_active_output_dir():
+    if os.path.exists(r"G:\\"):
+        if not os.path.exists(REDE_OUTPUT_DIR):
+            try: os.makedirs(REDE_OUTPUT_DIR)
+            except: pass
+        if os.path.exists(REDE_OUTPUT_DIR):
+            return REDE_OUTPUT_DIR
+    
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
-        
-    file_path = os.path.join(OUTPUT_DIR, f'Numerador_{tipo}_2026.docx')
+    return OUTPUT_DIR
+
+def exportar_para_docx(tipo):
+    target_dir = get_active_output_dir()
+    file_path = os.path.join(target_dir, f'Numerador_{tipo}_2026.docx')
     doc = Document()
     
     sections = doc.sections
@@ -98,19 +108,5 @@ def exportar_para_docx(tipo):
             row_cells[i].width = width
             
     doc.save(file_path)
-    
-    rede_disponivel = os.path.exists(r"G:\\")
-    if rede_disponivel:
-        if not os.path.exists(REDE_OUTPUT_DIR):
-            try: os.makedirs(REDE_OUTPUT_DIR)
-            except: pass
-            
-        if os.path.exists(REDE_OUTPUT_DIR):
-            try:
-                dest_path = os.path.join(REDE_OUTPUT_DIR, f'Numerador_{tipo}_2026.docx')
-                shutil.copy2(file_path, dest_path)
-            except:
-                pass
-                
     return file_path
 
