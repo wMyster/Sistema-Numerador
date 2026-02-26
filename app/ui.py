@@ -209,8 +209,8 @@ class TabNumerador(ttk.Frame):
         
         grupo_docs = ttk.LabelFrame(btn_container, text="Documentos DOCX", padding="5")
         grupo_docs.pack(side=tk.LEFT, fill=tk.Y, padx=5)
-        ttk.Button(grupo_docs, text="👁️ Ver Documento Individual", command=self.action_abrir_selecionado).pack(fill=tk.X, pady=2)
-        ttk.Button(grupo_docs, text=f"📖 Abrir Livro: {self.titulo_aba}", command=self.action_abrir_numerador).pack(fill=tk.X, pady=2)
+        ttk.Button(grupo_docs, text="📖 Abrir Documento", command=self.action_abrir_numerador).pack(fill=tk.X, pady=2)
+        ttk.Button(grupo_docs, text="📂 Abrir Pasta Documentos", command=self.action_abrir_pasta).pack(fill=tk.X, pady=2)
 
         # --- Gerenciamento (Lado Direito) ---
         grupo_sys = ttk.LabelFrame(btn_container, text="Gerenciamento de Registros e Contas", padding="5")
@@ -348,25 +348,15 @@ class TabNumerador(ttk.Frame):
             except Exception as e:
                 messagebox.showerror("Erro", f"Ocorreu um erro:\n{e}")
 
-    def action_abrir_selecionado(self):
-        if not self.selected_id:
-            messagebox.showwarning("Aviso", "Selecione um registro para visualizar.")
-            return
-            
+    def action_abrir_pasta(self):
         try:
-            numero = int(self.var_numero.get())
-            placa = self.var_placa.get() if self.tipo_db == "CERTIDAO" else ""
-            data = self.var_data.get()
-            assunto = self.var_assunto.get()
-            destino = self.var_destino.get()
-            obs = self.var_obs.get()
-            usuario = self.var_usuario.get()
-            
-            caminho = export_docx.exportar_unico_docx(self.tipo_db, numero, placa, data, assunto, destino, obs, usuario)
-            os.startfile(caminho)
+            pasta = export_docx.OUTPUT_DIR
+            if not os.path.exists(pasta):
+                os.makedirs(pasta)
+            os.startfile(pasta)
         except Exception as e:
-            messagebox.showerror("Erro", f"Não foi possivel abrir DOCX:\n{e}")
-                
+            messagebox.showerror("Erro", f"Não foi possivel abrir a pasta:\n{e}")
+            
     def action_abrir_numerador(self):
         try:
             caminho = export_docx.exportar_para_docx(self.tipo_db)

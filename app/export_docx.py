@@ -1,11 +1,12 @@
 import os
-import tempfile
+import shutil
 import db
 from docx import Document
 from docx.shared import Pt, Inches
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
+REDE_OUTPUT_DIR = r"G:\NUMERADORES DADOS\OUTPUT"
 
 TITULOS = {
     "OFICIO": "NUMERADOR DE OFÍCIO 2026",
@@ -97,45 +98,19 @@ def exportar_para_docx(tipo):
             row_cells[i].width = width
             
     doc.save(file_path)
+    
+    rede_disponivel = os.path.exists(r"G:\\")
+    if rede_disponivel:
+        if not os.path.exists(REDE_OUTPUT_DIR):
+            try: os.makedirs(REDE_OUTPUT_DIR)
+            except: pass
+            
+        if os.path.exists(REDE_OUTPUT_DIR):
+            try:
+                dest_path = os.path.join(REDE_OUTPUT_DIR, f'Numerador_{tipo}_2026.docx')
+                shutil.copy2(file_path, dest_path)
+            except:
+                pass
+                
     return file_path
 
-def exportar_unico_docx(tipo, numero, placa, data, assunto, destino, obs, usuario):
-    temp_dir = tempfile.gettempdir()
-        
-    nome_label = NOME_UNICO.get(tipo, tipo.capitalize())
-    file_path = os.path.join(temp_dir, f'{nome_label}_{numero:03d}_2026.docx')
-    doc = Document()
-    
-    titulo_cabecalho = f'{nome_label.upper()} Nº {numero:03d} / 2026'
-    titulo = doc.add_heading(titulo_cabecalho, 0)
-    titulo.alignment = 1
-    
-    doc.add_paragraph(' ')
-    p_data = doc.add_paragraph()
-    p_data.add_run('Data: ').bold = True
-    p_data.add_run(str(data))
-    
-    if tipo == "CERTIDAO":
-        p_placa = doc.add_paragraph()
-        p_placa.add_run('Placa: ').bold = True
-        p_placa.add_run(str(placa))
-    
-    p_assunto = doc.add_paragraph()
-    p_assunto.add_run('Assunto: ').bold = True
-    p_assunto.add_run(str(assunto))
-    
-    p_destino = doc.add_paragraph()
-    p_destino.add_run('Destino: ').bold = True
-    p_destino.add_run(str(destino))
-    
-    p_obs = doc.add_paragraph()
-    p_obs.add_run('Observações: ').bold = True
-    p_obs.add_run(str(obs))
-    
-    doc.add_paragraph(' ')
-    p_usuario = doc.add_paragraph()
-    p_usuario.add_run('Registrado por: ').bold = True
-    p_usuario.add_run(str(usuario))
-    
-    doc.save(file_path)
-    return file_path
