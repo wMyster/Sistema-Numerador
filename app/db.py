@@ -1,139 +1,344 @@
-import sqlite3
+from __future__ import annotations
+
+import json
 import os
 import shutil
-import glob
-import hashlib
+import sqlite3
+import threading
+from contextlib import contextmanager
 from datetime import datetime
-import docx
+from pathlib import Path
+from typing import Any, Optional
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(BASE_DIR, 'data')
-BACKUP_DIR = os.path.join(BASE_DIR, 'backup')
-NUMERADORES_DIR = os.path.join(BASE_DIR, 'Numeradores')
+import settings
 
-# Unidade de Rede (G:)
-REDE_DIR = r"G:\NUMERADORES DADOS\DATA"
-REDE_DB_PATH = os.path.join(REDE_DIR, 'numerador.sqlite')
-LOCAL_DB_PATH = os.path.join(DATA_DIR, 'numerador.sqlite')
+BASE_DIR = settings.PROJECT_ROOT
+NUMERADORES_DIR = os.path.join(BASE_DIR, "Numeradores")
 
-def get_active_db_path():
-    if os.path.exists(r"G:\\"):
-        if not os.path.exists(REDE_DIR):
-            try: os.makedirs(REDE_DIR)
-            except: return LOCAL_DB_PATH
-        return REDE_DB_PATH
-    return LOCAL_DB_PATH
 
-def init_schema(db_path):
+# ---------------------------------------------------------------------------
+# Conexão
+# ---------------------------------------------------------------------------
+
+def get_active_db_path() -> str:
+    return str(settings.get_db_path())
+
+
+def connect() -> sqlite3.Connection:
+    """Cria uma conexão com o banco SQLite com configurações padronizadas."""
+    db_path = settings.get_db_path()
     db_dir = os.path.dirname(db_path)
     if not os.path.exists(db_dir):
         os.makedirs(db_dir)
-    with sqlite3.connect(db_path) as conn:
-        cursor = conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE NOT NULL)''')
-        # Tabela central unificada
-        cursor.execute('''
+    con = sqlite3.connect(str(db_path), timeout=10)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA foreign_keys = ON")
+    return con
+
+
+@contextmanager
+def open_connection():
+    """Fornece uma conexão SQLite que é sempre fechada ao fim do bloco."""
+    con = connect()
+    try:
+        yield con
+    finally:
+        con.close()
+
+
+def get_connection():
+    """Compatibilidade retroativa — preferir open_connection() em código novo."""
+    return connect()
+
+
+# ---------------------------------------------------------------------------
+# Migração de schema
+# ---------------------------------------------------------------------------
+
+def _ensure_columns(con: sqlite3.Connection, table: str, cols_sql: dict[str, str]) -> None:
+    """Migração simples: se colunas não existirem, cria via ALTER TABLE."""
+    existing = {row["name"] for row in con.execute(f"PRAGMA table_info({table})").fetchall()}
+    for name, ddl in cols_sql.items():
+        if name not in existing:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+
+# ---------------------------------------------------------------------------
+# Auditoria
+# ---------------------------------------------------------------------------
+
+def log_auditoria(
+    usuario: str,
+    acao: str,
+    detalhes: str,
+    *,
+    actor: str | None = None,
+    target_id: int | None = None,
+) -> None:
+    """Grava um evento de auditoria com informações enriquecidas."""
+    agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    actor_final = (actor or usuario or "").strip() or None
+    with open_connection() as con:
+        con.execute("BEGIN IMMEDIATE")
+        con.execute(
+            """
+            INSERT INTO auditoria (data_hora, usuario, acao, detalhes, actor, target_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (agora, usuario, acao, detalhes, actor_final, target_id),
+        )
+        con.commit()
+
+
+def get_todas_auditorias(limit: int = 1000) -> list:
+    with open_connection() as con:
+        cur = con.execute(
+            """
+            SELECT data_hora, usuario, acao, detalhes
+            FROM auditoria ORDER BY id DESC LIMIT ?
+            """,
+            (limit,),
+        )
+        return cur.fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+
+def init_schema(db_path: str) -> None:
+    db_dir = os.path.dirname(db_path)
+    if not os.path.exists(db_dir):
+        os.makedirs(db_dir)
+
+    with sqlite3.connect(db_path, timeout=10) as con:
+        con.row_factory = sqlite3.Row
+        con.execute("PRAGMA foreign_keys = ON")
+        con.execute("BEGIN IMMEDIATE")
+
+        # Tabela principal de registros
+        con.execute(
+            """
             CREATE TABLE IF NOT EXISTS registros (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                tipo TEXT NOT NULL,
-                numero INTEGER NOT NULL,
-                placa TEXT,
-                data TEXT,
-                assunto TEXT,
-                destino TEXT,
-                obs TEXT,
-                usuario TEXT,
-                created_at TEXT,
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                tipo       TEXT    NOT NULL,
+                numero     INTEGER NOT NULL,
+                placa      TEXT,
+                data       TEXT,
+                assunto    TEXT,
+                destino    TEXT,
+                obs        TEXT,
+                usuario    TEXT,
+                created_at TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
                 updated_at TEXT,
+                deleted_at TEXT,
                 UNIQUE(tipo, numero)
             )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS auditoria (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                data_hora TEXT NOT NULL,
-                usuario TEXT NOT NULL,
-                acao TEXT NOT NULL,
-                detalhes TEXT NOT NULL
-            )
-        ''')
-        # Limpar registros fantasmas que estragam a numeração MAX() e vêm sujos do Word
-        # Eles podem conter só " " ou "-"
-        cursor.execute('''
-            DELETE FROM registros 
-            WHERE (assunto IS NULL OR TRIM(assunto) = '' OR TRIM(assunto) = '-') 
-              AND (destino IS NULL OR TRIM(destino) = '' OR TRIM(destino) = '-') 
-              AND (obs IS NULL OR TRIM(obs) = '' OR TRIM(obs) = '-') 
-              AND (usuario IS NULL OR TRIM(usuario) = '' OR TRIM(usuario) = '-')
-        ''')
-        # Re-arrumar IDs do auto-increment pra quando todos do topo forem apagados (opcional mas bom)
-        conn.commit()
+            """
+        )
 
-def merge_dbs(db_main, db_attached):
+        # Garante colunas adicionadas em versões posteriores
+        _ensure_columns(
+            con,
+            "registros",
+            {
+                "deleted_at": "deleted_at TEXT",
+                "created_at": "created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))",
+            },
+        )
+
+        # Tabela de auditoria enriquecida
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS auditoria (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                data_hora TEXT    NOT NULL,
+                usuario   TEXT    NOT NULL,
+                acao      TEXT    NOT NULL,
+                detalhes  TEXT    NOT NULL,
+                actor     TEXT,
+                target_id INTEGER
+            )
+            """
+        )
+
+        _ensure_columns(
+            con,
+            "auditoria",
+            {
+                "actor": "actor TEXT",
+                "target_id": "target_id INTEGER",
+            },
+        )
+
+        # Índices de performance
+        con.execute("CREATE INDEX IF NOT EXISTS idx_registros_tipo     ON registros(tipo)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_registros_deleted  ON registros(deleted_at)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_registros_data     ON registros(data)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_registros_usuario  ON registros(usuario)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_auditoria_data_hora ON auditoria(data_hora)")
+
+        # Limpeza de registros sem dados úteis (migração legada)
+        con.execute(
+            """
+            DELETE FROM registros
+            WHERE deleted_at IS NULL
+              AND (assunto IS NULL OR TRIM(assunto)  = '' OR TRIM(assunto)  = '-')
+              AND (destino IS NULL OR TRIM(destino)  = '' OR TRIM(destino)  = '-')
+              AND (obs     IS NULL OR TRIM(obs)      = '' OR TRIM(obs)      = '-')
+              AND (usuario IS NULL OR TRIM(usuario)  = '' OR TRIM(usuario)  = '-')
+            """
+        )
+
+        con.commit()
+
+
+def init_db() -> None:
+    local_db = str(settings.LOCAL_DATA_DIR / "numerador.sqlite")
+    init_schema(local_db)
+    active_path = get_active_db_path()
+    if active_path != local_db:
+        init_schema(active_path)
+
+    # Migração de users legados
+    try:
+        users_file = settings.get_users_file_path()
+        if not users_file.exists():
+            try:
+                with open_connection() as con:
+                    cur = con.execute("SELECT nome FROM usuarios")
+                    nomes_existentes = [r["nome"].strip().upper() for r in cur.fetchall()]
+                    users_dict = {u: "comum" for u in nomes_existentes if u}
+                    users_dict.update({"DIRETORIA": "admin", "VIA DCT": "admin"})
+                if not users_dict:
+                    users_dict = {"DIRETORIA": "admin", "VIA DCT": "admin"}
+            except Exception:
+                users_dict = {"DIRETORIA": "admin", "VIA DCT": "admin"}
+
+            users_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(users_file, "w", encoding="utf-8") as f:
+                json.dump(users_dict, f, indent=2, ensure_ascii=False)
+
+            try:
+                with open_connection() as con:
+                    con.execute("BEGIN IMMEDIATE")
+                    con.execute("DROP TABLE IF EXISTS usuarios")
+                    con.commit()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Migração: move obs→usuario em registros antigos
+    try:
+        with open_connection() as con:
+            con.execute("BEGIN IMMEDIATE")
+            con.execute(
+                """
+                UPDATE registros
+                SET usuario = UPPER(TRIM(obs)), obs = ''
+                WHERE (usuario IS NULL OR TRIM(usuario) = '')
+                  AND obs IS NOT NULL AND TRIM(obs) != '' AND LENGTH(obs) < 50
+                """
+            )
+            con.commit()
+    except Exception:
+        pass
+
+    sincronizar_bancos()
+    bootstrap_from_docx_if_empty()
+
+
+# ---------------------------------------------------------------------------
+# Backup e sincronização
+# ---------------------------------------------------------------------------
+
+def fazer_backup() -> None:
+    try:
+        from backup import perform_backup
+        threading.Thread(target=perform_backup, kwargs={"is_manual": False}, daemon=True).start()
+    except Exception:
+        pass
+
+
+def log_debug(msg: str) -> None:
+    pass
+
+
+def sincronizar_bancos() -> None:
+    rede_disponivel = settings.get_rede_path() is not None
+    if rede_disponivel:
+        rede_db = settings.get_network_data_dir() / "numerador.sqlite"
+        local_db = settings.LOCAL_DATA_DIR / "numerador.sqlite"
+        if local_db.exists() and rede_db.exists():
+            merge_dbs(str(rede_db), str(local_db))
+            merge_dbs(str(local_db), str(rede_db))
+        elif rede_db.exists() and not local_db.exists():
+            settings.LOCAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(rede_db), str(local_db))
+        elif local_db.exists() and not rede_db.exists():
+            settings.get_network_data_dir().mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(local_db), str(rede_db))
+
+
+def merge_dbs(db_main: str, db_attached: str) -> None:
     try:
         init_schema(db_main)
         init_schema(db_attached)
-        with sqlite3.connect(db_main, timeout=10) as conn:
-            conn.execute(f"ATTACH DATABASE '{db_attached}' AS aux;")
-            conn.execute("INSERT OR IGNORE INTO usuarios (nome) SELECT nome FROM aux.usuarios;")
-            conn.execute('''
-                INSERT OR IGNORE INTO registros (tipo, numero, placa, data, assunto, destino, obs, usuario, created_at, updated_at)
-                SELECT tipo, numero, placa, data, assunto, destino, obs, usuario, created_at, updated_at FROM aux.registros
-                WHERE (tipo, numero) NOT IN (SELECT tipo, numero FROM registros);
-            ''')
-            conn.execute('''
+        with sqlite3.connect(db_main, timeout=10) as con:
+            con.execute("BEGIN IMMEDIATE")
+            con.execute(f"ATTACH DATABASE '{db_attached}' AS aux;")
+            con.execute(
+                """
+                INSERT OR IGNORE INTO registros
+                    (tipo, numero, placa, data, assunto, destino, obs, usuario, created_at, updated_at, deleted_at)
+                SELECT tipo, numero, placa, data, assunto, destino, obs, usuario, created_at, updated_at, deleted_at
+                FROM aux.registros
+                WHERE (tipo, numero) NOT IN (SELECT tipo, numero FROM registros)
+                """
+            )
+            con.execute(
+                """
                 UPDATE registros
-                SET 
-                    placa = (SELECT placa FROM aux.registros WHERE tipo = registros.tipo AND numero = registros.numero),
-                    data = (SELECT data FROM aux.registros WHERE tipo = registros.tipo AND numero = registros.numero),
-                    assunto = (SELECT assunto FROM aux.registros WHERE tipo = registros.tipo AND numero = registros.numero),
-                    destino = (SELECT destino FROM aux.registros WHERE tipo = registros.tipo AND numero = registros.numero),
-                    obs = (SELECT obs FROM aux.registros WHERE tipo = registros.tipo AND numero = registros.numero),
-                    usuario = (SELECT usuario FROM aux.registros WHERE tipo = registros.tipo AND numero = registros.numero),
-                    updated_at = (SELECT updated_at FROM aux.registros WHERE tipo = registros.tipo AND numero = registros.numero)
+                SET
+                    placa      = (SELECT placa      FROM aux.registros a WHERE a.tipo = registros.tipo AND a.numero = registros.numero),
+                    data       = (SELECT data       FROM aux.registros a WHERE a.tipo = registros.tipo AND a.numero = registros.numero),
+                    assunto    = (SELECT assunto    FROM aux.registros a WHERE a.tipo = registros.tipo AND a.numero = registros.numero),
+                    destino    = (SELECT destino    FROM aux.registros a WHERE a.tipo = registros.tipo AND a.numero = registros.numero),
+                    obs        = (SELECT obs        FROM aux.registros a WHERE a.tipo = registros.tipo AND a.numero = registros.numero),
+                    usuario    = (SELECT usuario    FROM aux.registros a WHERE a.tipo = registros.tipo AND a.numero = registros.numero),
+                    updated_at = (SELECT updated_at FROM aux.registros a WHERE a.tipo = registros.tipo AND a.numero = registros.numero),
+                    deleted_at = (SELECT deleted_at FROM aux.registros a WHERE a.tipo = registros.tipo AND a.numero = registros.numero)
                 WHERE (tipo, numero) IN (
                     SELECT m.tipo, m.numero FROM registros m
                     JOIN aux.registros a ON m.tipo = a.tipo AND m.numero = a.numero
                     WHERE a.updated_at > m.updated_at
-                );
-            ''')
-            conn.execute('''
-                INSERT INTO auditoria (data_hora, usuario, acao, detalhes)
-                SELECT data_hora, usuario, acao, detalhes FROM aux.auditoria
-                WHERE (data_hora || acao || detalhes) NOT IN (SELECT data_hora || acao || detalhes FROM auditoria)
-            ''')
-            conn.commit()
-    except Exception as e:
-        pass 
+                )
+                """
+            )
+            con.execute(
+                """
+                INSERT INTO auditoria (data_hora, usuario, acao, detalhes, actor, target_id)
+                SELECT data_hora, usuario, acao, detalhes,
+                       COALESCE(actor, usuario),
+                       target_id
+                FROM aux.auditoria
+                WHERE (data_hora || acao || detalhes) NOT IN
+                      (SELECT data_hora || acao || detalhes FROM auditoria)
+                """
+            )
+            con.commit()
+    except Exception:
+        pass
 
-def log_auditoria(usuario, acao, detalhes):
-    agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO auditoria (data_hora, usuario, acao, detalhes)
-            VALUES (?, ?, ?, ?)
-        ''', (agora, usuario, acao, detalhes))
-        conn.commit()
-        
-def get_todas_auditorias(limit=1000):
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT data_hora, usuario, acao, detalhes 
-            FROM auditoria ORDER BY id DESC LIMIT ?
-        ''', (limit,))
-        return cursor.fetchall()
 
-def log_debug(msg):
-    # Pode usar pra debugar importacao do word se quiser
-    pass
+# ---------------------------------------------------------------------------
+# Bootstrap a partir de DOCX legado
+# ---------------------------------------------------------------------------
 
-def bootstrap_from_docx_if_empty():
-    """ 
-    Procura os arquivos na pasta Numeradores e alimenta a nova tabela 'registros'. 
-    Somente importa linhas que possuam um Nº válido (int).
-    """
+def bootstrap_from_docx_if_empty() -> None:
+    import docx as _docx
+
     mapa = {
         "NUMERADOR DE OFÍCIO 2026.docx": "OFICIO",
         "NUMERADOR DE MEMORANDO 2026.docx": "MEMORANDO",
@@ -141,309 +346,513 @@ def bootstrap_from_docx_if_empty():
         "NUMERADOR DE NOTIFICAÇAO 2026.docx": "NOTIFICACAO",
         "NUMERADOR DE PORTARIA 2026.docx": "PORTARIA",
         "NUMERADOR DE AUTORIZAÇÃO PARA CONDUÇÃO DE VEÍCULO OFÍCIAL 2026.docx": "AUTORIZACAO_VEICULO",
-        "NUMERADOR DE CERTIDÃO  2026.docx": "CERTIDAO"
+        "NUMERADOR DE CERTIDÃO  2026.docx": "CERTIDAO",
     }
-    
-    with get_connection() as conn:
-        c = conn.cursor()
-        c.execute('SELECT COUNT(*) FROM registros')
-        if c.fetchone()[0] > 0:
-            return # Ja tem arquivos, nao faz o import inicial 
+
+    with open_connection() as con:
+        cur = con.execute("SELECT COUNT(*) AS cnt FROM registros WHERE deleted_at IS NULL")
+        if cur.fetchone()["cnt"] > 0:
+            return
 
     if not os.path.exists(NUMERADORES_DIR):
         return
-        
+
     for nome_arquivo, tipo_db in mapa.items():
         filepath = os.path.join(NUMERADORES_DIR, nome_arquivo)
         if os.path.exists(filepath):
             try:
-                doc = docx.Document(filepath)
+                doc = _docx.Document(filepath)
                 if doc.tables:
                     table = doc.tables[0]
-                    for row in table.rows[1:]: # pula header
-                        cells = [cell.text.strip().replace('\n', ' ') for cell in row.cells]
-                        
-                        # Extrair o numero (garantir q n eh linha vazia inteira)
+                    for row in table.rows[1:]:
+                        cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
                         try:
                             n_str = cells[0].strip()
-                            if not n_str: continue
+                            if not n_str:
+                                continue
                             numero = int(n_str)
-                        except:
+                        except Exception:
                             continue
-                            
-                        placa = ""
-                        data = ""
-                        assunto = ""
-                        destino = ""
-                        obs = ""
-                        
+
+                        placa = data = assunto = destino = obs = ""
+
                         if tipo_db == "CERTIDAO":
                             if len(cells) >= 6:
-                                placa = cells[1]
-                                data = cells[2]
-                                assunto = cells[3]
-                                destino = cells[4]
-                                obs = cells[5]
+                                placa, data, assunto, destino, obs = (
+                                    cells[1], cells[2], cells[3], cells[4], cells[5],
+                                )
                         else:
                             if len(cells) >= 5:
-                                data = cells[1]
-                                assunto = cells[2]
-                                destino = cells[3]
-                                obs = cells[4]
-                                
-                        usuario = "" # usuario costuma estar em obs, mas vamos salvar o obs puro
-                        
+                                data, assunto, destino, obs = (
+                                    cells[1], cells[2], cells[3], cells[4],
+                                )
+
                         try:
-                            insert_registro(tipo_db, numero, placa, data, assunto, destino, obs, usuario, skip_sync=True)
+                            insert_registro(tipo_db, numero, placa, data, assunto, destino, obs, "", skip_sync=True)
                         except Exception as e:
                             log_debug(f"Erro inserindo {tipo_db} - {numero}: {e}")
             except Exception as e:
                 log_debug(f"Erro ao ler DOCX {nome_arquivo}: {e}")
-                
-    # Ao final do bootstrap, forcar um sync pra rechear a rede/local
+
     sincronizar_bancos()
 
 
-def sincronizar_bancos():
-    rede_disponivel = os.path.exists(r"G:\\")
-    if rede_disponivel and not os.path.exists(REDE_DIR):
-        try: os.makedirs(REDE_DIR)
-        except: rede_disponivel = False
+# ---------------------------------------------------------------------------
+# Usuários
+# ---------------------------------------------------------------------------
 
-    if rede_disponivel:
-        if os.path.exists(LOCAL_DB_PATH) and os.path.exists(REDE_DB_PATH):
-            merge_dbs(REDE_DB_PATH, LOCAL_DB_PATH)
-            merge_dbs(LOCAL_DB_PATH, REDE_DB_PATH)
-        elif os.path.exists(REDE_DB_PATH) and not os.path.exists(LOCAL_DB_PATH):
-            if not os.path.exists(DATA_DIR): os.makedirs(DATA_DIR)
-            shutil.copy2(REDE_DB_PATH, LOCAL_DB_PATH)
-        elif os.path.exists(LOCAL_DB_PATH) and not os.path.exists(REDE_DB_PATH):
-            shutil.copy2(LOCAL_DB_PATH, REDE_DB_PATH)
-
-def get_connection():
-    db_path = get_active_db_path()
-    db_dir = os.path.dirname(db_path)
-    if not os.path.exists(db_dir):
-        os.makedirs(db_dir)
-    return sqlite3.connect(db_path, timeout=10)
-
-def init_db():
-    init_schema(LOCAL_DB_PATH)
-    active_path = get_active_db_path()
-    if active_path != LOCAL_DB_PATH:
-        init_schema(active_path)
-
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        
-        # Busca usuários atuais para não perder ninguém que foi criado manualmente
-        cursor.execute("SELECT nome FROM usuarios")
-        nomes_existentes = [r[0].strip().upper() for r in cursor.fetchall()]
-        
-        # Raspagem de nomes antigos salvos em 'obs'
+def get_all_usuarios() -> list[str]:
+    users_file = settings.get_users_file_path()
+    users = ["DIRETORIA", "VIA DCT"]
+    if users_file.exists():
         try:
-            cursor.execute('''
-                SELECT DISTINCT UPPER(TRIM(obs)) FROM registros 
-                WHERE obs IS NOT NULL AND obs != '' AND LENGTH(obs) < 50
-            ''')
-            possiveis_nomes = [r[0].strip().upper() for r in cursor.fetchall()]
-        except:
-            possiveis_nomes = []
-            
-        # Limpa tabela para resetar a formatação UPPER sem conflito UNIQUE
-        cursor.execute("DELETE FROM usuarios")
-        
-        # Junta todas as fontes e remove os indesejados (set pra tirar duplicados)
-        usuarios_padrao = ['DIRETORIA', 'VIA DCT']
-        todos_nomes = set(nomes_existentes + possiveis_nomes + usuarios_padrao)
-        
-        remover = {'ADMINISTRADOR', 'SECRETARIA', 'FERNANDO VIA DCT', 'RENATO'}
-        todos_nomes = todos_nomes - remover
-        
-        # Re-insere já sanitizado
-        for u in sorted(todos_nomes):
-            if u:  # Previne strings vazias
-                cursor.execute('INSERT OR IGNORE INTO usuarios (nome) VALUES (?)', (u,))
-                
-        # Migra as siglas/nomes erroneamente colocadas na OBS para a coluna verdadeira USUARIO 
-        cursor.execute("""
-            UPDATE registros 
-            SET usuario = UPPER(TRIM(obs)), obs = '' 
-            WHERE (usuario IS NULL OR TRIM(usuario) = '') 
-            AND obs IS NOT NULL AND TRIM(obs) != '' AND LENGTH(obs) < 50
-        """)
-                
-        conn.commit()
-    sincronizar_bancos()
-    bootstrap_from_docx_if_empty()
+            with open(users_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                users = list(data.keys())
+        except Exception:
+            pass
+    if not users:
+        users = ["DIRETORIA"]
+    return sorted(users)
 
-# --- USUARIOS ---
-def get_all_usuarios():
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT nome FROM usuarios ORDER BY nome ASC')
-        return [row[0] for row in cursor.fetchall()]
 
-def add_usuario(nome):
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('INSERT INTO usuarios (nome) VALUES (?)', (nome.upper(),))
-        conn.commit()
-    sincronizar_bancos()
-
-def delete_usuario(nome):
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM usuarios WHERE nome = ?', (nome.upper(),))
-        conn.commit()
-    sincronizar_bancos()
-
-# --- REGISTROS GERAIS ---
-def get_file_hash(filepath):
-    """Gera um hash MD5 do arquivo para verificar se houve alteracao binaria"""
-    hasher = hashlib.md5()
+def get_usuario_role(nome: str) -> str:
+    users_file = settings.get_users_file_path()
     try:
-        with open(filepath, 'rb') as f:
-            while chunk := f.read(8192):
-                hasher.update(chunk)
-        return hasher.hexdigest()
-    except:
-        return None
-
-def get_proximo_numero(tipo):
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT MAX(numero) FROM registros WHERE tipo=?', (tipo,))
-        row = cursor.fetchone()
-        return (row[0] + 1) if row[0] is not None else 1
-
-def fazer_backup():
-    rede_ok = os.path.exists(r"G:\\")
-    local_backup_folder = BACKUP_DIR
-    if rede_ok:
-        backup_folder = os.path.join(r"G:\NUMERADORES DADOS", "BACKUPS")
-    else:
-        backup_folder = local_backup_folder
-        
-    if not os.path.exists(backup_folder):
-        try: os.makedirs(backup_folder)
-        except: return None
-        
-    # Se a rede voltou e decidimos usar ela, vamos mover os backups locais
-    # antigos que ficaram órfãos no pendrive para o G:\
-    if rede_ok and os.path.exists(local_backup_folder):
-        for of_file in glob.glob(os.path.join(local_backup_folder, "*.sqlite")):
-            try:
-                shutil.move(of_file, backup_folder)
-            except: pass
-        
-    agora = datetime.now()
-    nome_backup = f'numerador_backup_{agora.strftime("%Y_%m_%d_%H%M%S")}.sqlite'
-    backup_file = os.path.join(backup_folder, nome_backup)
-    
-    db_ativo = get_active_db_path()
-    try:
-        if os.path.exists(db_ativo):
-            
-            # --- INTELIGENCIA DE HASH (EVITAR CLONES IDENTICOS) ---
-            # Identifica qual foi o ULTIMO backup criado na pasta alvo
-            ultimo_backup_hash = None
-            try:
-                todos_backups = glob.glob(os.path.join(backup_folder, "numerador_backup_*.sqlite"))
-                if todos_backups:
-                    todos_backups.sort(key=os.path.getmtime, reverse=True)
-                    ultimo_backup = todos_backups[0]
-                    ultimo_backup_hash = get_file_hash(ultimo_backup)
-            except: pass
-            
-            db_ativo_hash = get_file_hash(db_ativo)
-            
-            # Subtrai a necessidade de copiar se os conteudos forem identicos 
-            # (Ex: Usuario esqueceu atestado na hora do almoco e nao ocorreu lancamentos no BD)
-            if ultimo_backup_hash and db_ativo_hash and (ultimo_backup_hash == db_ativo_hash):
-                return None
-            
-            # Se for diferente (houve insercao/delete) entao copiamos!
-            shutil.copy2(db_ativo, backup_file)
-            
-            # Rotina de Limpeza (Mantem apenas os 20 mais recentes na pasta)
-            try:
-                todos_backups = glob.glob(os.path.join(backup_folder, "numerador_backup_*.sqlite"))
-                todos_backups.sort(key=os.path.getmtime, reverse=True)
-                
-                if len(todos_backups) > 20:
-                    excedentes = todos_backups[20:]
-                    for lixo in excedentes:
-                        os.remove(lixo)
-            except:
-                pass
-                
-            return backup_file
-    except:
+        if users_file.exists():
+            with open(users_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                role = str(data.get(nome.upper(), "")).strip().lower()
+                if role == "admin" or nome.upper() in ["DIRETORIA", "VIA DCT"]:
+                    return "admin"
+                return "comum"
+    except Exception:
         pass
-    return None
+    return "admin" if nome.upper() in ["DIRETORIA", "VIA DCT"] else "comum"
 
-def insert_registro(tipo, numero, placa, data, assunto, destino, obs, usuario, skip_sync=False):
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        now = datetime.now().isoformat()
-        cursor.execute('''
-            INSERT OR IGNORE INTO registros (tipo, numero, placa, data, assunto, destino, obs, usuario, created_at, updated_at)
+
+def add_usuario(nome: str, role: str = "comum") -> None:
+    users_file = settings.get_users_file_path()
+    try:
+        if users_file.exists():
+            with open(users_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        else:
+            data = {"DIRETORIA": "admin", "VIA DCT": "admin"}
+    except Exception:
+        data = {}
+
+    data[nome.upper()] = role
+    users_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(users_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+    if settings.get_rede_path():
+        try:
+            loc = settings.LOCAL_DATA_DIR / "users.json"
+            loc.parent.mkdir(parents=True, exist_ok=True)
+            with open(loc, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+
+
+def delete_usuario(nome: str) -> None:
+    users_file = settings.get_users_file_path()
+    try:
+        if users_file.exists():
+            with open(users_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        else:
+            data = {}
+        if nome.upper() in data:
+            del data[nome.upper()]
+            with open(users_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            if settings.get_rede_path():
+                loc = settings.LOCAL_DATA_DIR / "users.json"
+                if loc.exists():
+                    with open(loc, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Registros — operações principais
+# ---------------------------------------------------------------------------
+
+def get_proximo_numero(tipo: str) -> int:
+    with open_connection() as con:
+        cur = con.execute(
+            "SELECT MAX(numero) AS mx FROM registros WHERE tipo = ? AND deleted_at IS NULL",
+            (tipo,),
+        )
+        row = cur.fetchone()
+        return (row["mx"] + 1) if row["mx"] is not None else 1
+
+
+def insert_registro(
+    tipo: str,
+    numero: int,
+    placa: str,
+    data: str,
+    assunto: str,
+    destino: str,
+    obs: str,
+    usuario: str,
+    skip_sync: bool = False,
+) -> None:
+    now = datetime.now().isoformat()
+    with open_connection() as con:
+        con.execute("BEGIN IMMEDIATE")
+        con.execute(
+            """
+            INSERT OR IGNORE INTO registros
+                (tipo, numero, placa, data, assunto, destino, obs, usuario, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (tipo, numero, placa, data, assunto, destino, obs, usuario, now, now))
-        conn.commit()
+            """,
+            (tipo, numero, placa, data, assunto, destino, obs, usuario, now, now),
+        )
+        con.commit()
+
     if not skip_sync:
         sincronizar_bancos()
         fazer_backup()
 
-def update_registro(id_registro, placa, data, assunto, destino, obs, usuario):
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        now = datetime.now().isoformat()
-        cursor.execute('''
+
+def update_registro(
+    id_registro: int,
+    placa: str,
+    data: str,
+    assunto: str,
+    destino: str,
+    obs: str,
+    usuario: str,
+) -> None:
+    now = datetime.now().isoformat()
+    with open_connection() as con:
+        con.execute("BEGIN IMMEDIATE")
+        con.execute(
+            """
             UPDATE registros
-            SET placa=?, data=?, assunto=?, destino=?, obs=?, usuario=?, updated_at=?
-            WHERE id=?
-        ''', (placa, data, assunto, destino, obs, usuario, now, id_registro))
-        conn.commit()
+            SET placa = ?, data = ?, assunto = ?, destino = ?, obs = ?, usuario = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (placa, data, assunto, destino, obs, usuario, now, id_registro),
+        )
+        con.commit()
     sincronizar_bancos()
     fazer_backup()
 
-def delete_registro(id_registro):
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM registros WHERE id=?', (id_registro,))
-        conn.commit()
+
+def delete_registro(id_registro: int) -> None:
+    """Soft-delete: marca deleted_at em vez de excluir fisicamente."""
+    now = datetime.now().isoformat()
+    with open_connection() as con:
+        con.execute("BEGIN IMMEDIATE")
+        con.execute(
+            "UPDATE registros SET deleted_at = ?, updated_at = ? WHERE id = ?",
+            (now, now, id_registro),
+        )
+        con.commit()
     sincronizar_bancos()
     fazer_backup()
 
-def get_all_registros(tipo, busca=""):
-    with get_connection() as conn:
-        cursor = conn.cursor()
+
+def restore_registro(id_registro: int) -> None:
+    """Restaura um registro da lixeira."""
+    now = datetime.now().isoformat()
+    with open_connection() as con:
+        con.execute("BEGIN IMMEDIATE")
+        con.execute(
+            "UPDATE registros SET deleted_at = NULL, updated_at = ? WHERE id = ?",
+            (now, id_registro),
+        )
+        con.commit()
+    sincronizar_bancos()
+    fazer_backup()
+
+
+def delete_permanente(id_registro: int) -> None:
+    """Exclui fisicamente um registro (apenas da lixeira)."""
+    with open_connection() as con:
+        con.execute("BEGIN IMMEDIATE")
+        con.execute("DELETE FROM registros WHERE id = ?", (id_registro,))
+        con.commit()
+    sincronizar_bancos()
+    fazer_backup()
+
+
+def esvaziar_lixeira() -> int:
+    """Exclui permanentemente todos os registros na lixeira. Retorna a quantidade."""
+    with open_connection() as con:
+        con.execute("BEGIN IMMEDIATE")
+        cur = con.execute("DELETE FROM registros WHERE deleted_at IS NOT NULL")
+        count = int(cur.rowcount or 0)
+        con.commit()
+    sincronizar_bancos()
+    fazer_backup()
+    return count
+
+
+# ---------------------------------------------------------------------------
+# Consultas
+# ---------------------------------------------------------------------------
+
+def get_all_registros(
+    tipo: str,
+    busca: str = "",
+    data_inicio: str = "",
+    data_fim: str = "",
+    include_deleted: bool = False,
+    limit: int = 200,
+) -> list:
+    with open_connection() as con:
+        query = (
+            "SELECT id, numero, placa, data, assunto, destino, obs, usuario "
+            "FROM registros WHERE tipo = ?"
+        )
+        params: list[Any] = [tipo]
+
+        if not include_deleted:
+            query += " AND deleted_at IS NULL"
+
         if busca:
-            termo = f'%{busca}%'
-            cursor.execute('''
-                SELECT id, numero, placa, data, assunto, destino, obs, usuario
-                FROM registros
-                WHERE tipo=? AND (assunto LIKE ? OR destino LIKE ? OR obs LIKE ? OR usuario LIKE ? OR placa LIKE ?)
-                ORDER BY numero ASC
-            ''', (tipo, termo, termo, termo, termo, termo))
-        else:
-            cursor.execute('SELECT id, numero, placa, data, assunto, destino, obs, usuario FROM registros WHERE tipo=? ORDER BY numero ASC', (tipo,))
-        return cursor.fetchall()
+            termo = f"%{busca}%"
+            query += (
+                " AND (assunto LIKE ? OR destino LIKE ? OR obs LIKE ? OR usuario LIKE ? OR placa LIKE ?)"
+            )
+            params.extend([termo, termo, termo, termo, termo])
 
-def get_estatisticas():
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT tipo, COUNT(*) 
-            FROM registros 
-            WHERE (assunto IS NOT NULL AND TRIM(assunto) != '') 
-               OR (destino IS NOT NULL AND TRIM(destino) != '') 
-               OR (obs IS NOT NULL AND TRIM(obs) != '') 
+        if data_inicio and data_fim:
+            query += (
+                " AND (SUBSTR(data,7,4)||'-'||SUBSTR(data,4,2)||'-'||SUBSTR(data,1,2)) BETWEEN ? AND ?"
+            )
+            try:
+                di = datetime.strptime(data_inicio, "%d/%m/%Y").strftime("%Y-%m-%d")
+                df = datetime.strptime(data_fim, "%d/%m/%Y").strftime("%Y-%m-%d")
+                params.extend([di, df])
+            except Exception:
+                query = query.rsplit(" AND ", 1)[0]
+
+        query += " ORDER BY numero DESC"
+        if limit and limit > 0:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        cur = con.execute(query, tuple(params))
+        return cur.fetchall()
+
+
+def list_lixeira(tipo: str | None = None, limit: int = 200) -> list:
+    """Lista registros apagados (soft-delete), opcionalmente filtrados por tipo."""
+    with open_connection() as con:
+        query = (
+            "SELECT id, tipo, numero, placa, data, assunto, destino, obs, usuario, deleted_at "
+            "FROM registros WHERE deleted_at IS NOT NULL"
+        )
+        params: list[Any] = []
+        if tipo:
+            query += " AND tipo = ?"
+            params.append(tipo)
+        query += " ORDER BY deleted_at DESC, id DESC"
+        
+        if limit and limit > 0:
+            query += " LIMIT ?"
+            params.append(limit)
+            
+        return con.execute(query, tuple(params)).fetchall()
+
+
+def get_estatisticas() -> list:
+    with open_connection() as con:
+        cur = con.execute(
+            """
+            SELECT tipo, COUNT(*) AS cnt
+            FROM registros
+            WHERE deleted_at IS NULL
+              AND (
+                  (assunto IS NOT NULL AND TRIM(assunto) != '')
+               OR (destino IS NOT NULL AND TRIM(destino) != '')
+               OR (obs     IS NOT NULL AND TRIM(obs)     != '')
                OR (usuario IS NOT NULL AND TRIM(usuario) != '')
-            GROUP BY tipo 
+              )
+            GROUP BY tipo
             ORDER BY tipo ASC
-        ''')
-        return cursor.fetchall()
+            """
+        )
+        return cur.fetchall()
 
+
+# ---------------------------------------------------------------------------
+# Analytics / Dashboard
+# ---------------------------------------------------------------------------
+
+def get_estatisticas_dashboard() -> dict:
+    """Retorna estatísticas gerenciais do mês corrente."""
+    hoje = datetime.now()
+    mes_atual = f"{hoje.month:02d}/{hoje.year}"
+    stats: dict = {"total_mes": 0, "por_tipo": {}, "usuarios_ativos": 0}
+
+    try:
+        with open_connection() as con:
+            cur = con.execute(
+                """
+                SELECT tipo, COUNT(id) AS cnt FROM registros
+                WHERE data LIKE ? AND deleted_at IS NULL
+                GROUP BY tipo
+                """,
+                (f"%/{mes_atual}",),
+            )
+            for row in cur.fetchall():
+                stats["por_tipo"][row["tipo"]] = row["cnt"]
+                stats["total_mes"] += row["cnt"]
+
+            cur = con.execute(
+                """
+                SELECT COUNT(DISTINCT usuario) AS cnt FROM registros
+                WHERE data LIKE ? AND deleted_at IS NULL
+                  AND usuario IS NOT NULL AND usuario != ''
+                """,
+                (f"%/{mes_atual}",),
+            )
+            row = cur.fetchone()
+            if row:
+                stats["usuarios_ativos"] = row["cnt"]
+    except Exception as e:
+        print(f"Erro ao buscar estatísticas: {e}")
+
+    return stats
+
+
+def get_top_destinos(limite: int = 5) -> list:
+    """Retorna os destinos mais frequentes."""
+    try:
+        with open_connection() as con:
+            cur = con.execute(
+                """
+                SELECT destino, COUNT(id) AS qtd FROM registros
+                WHERE deleted_at IS NULL
+                  AND destino IS NOT NULL AND TRIM(destino) != ''
+                GROUP BY TRIM(LOWER(destino))
+                ORDER BY qtd DESC
+                LIMIT ?
+                """,
+                (limite,),
+            )
+            return [(str(r["destino"]).strip().title(), r["qtd"]) for r in cur.fetchall()]
+    except Exception as e:
+        print(f"Erro top destinos: {e}")
+    return []
+
+
+def get_historico_assuntos(limite: int = 30) -> list[str]:
+    try:
+        with open_connection() as con:
+            cur = con.execute(
+                """
+                SELECT DISTINCT TRIM(assunto) AS a FROM registros
+                WHERE deleted_at IS NULL
+                  AND assunto IS NOT NULL AND TRIM(assunto) != ''
+                ORDER BY id DESC LIMIT ?
+                """,
+                (limite,),
+            )
+            return [r["a"] for r in cur.fetchall()]
+    except Exception:
+        pass
+    return []
+
+
+def get_historico_destinos(limite: int = 30) -> list[str]:
+    try:
+        with open_connection() as con:
+            cur = con.execute(
+                """
+                SELECT DISTINCT TRIM(destino) AS d FROM registros
+                WHERE deleted_at IS NULL
+                  AND destino IS NOT NULL AND TRIM(destino) != ''
+                ORDER BY id DESC LIMIT ?
+                """,
+                (limite,),
+            )
+            return [r["d"] for r in cur.fetchall()]
+    except Exception:
+        pass
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Modelos Favoritos
+# ---------------------------------------------------------------------------
+
+def get_modelos_file_path() -> Path:
+    p = settings.get_users_file_path().parent / "modelos_favoritos.json"
+    if not p.exists():
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump({}, f)
+        except Exception:
+            pass
+    return p
+
+
+def get_modelos(tipo_db: str) -> dict:
+    try:
+        arquivo = get_modelos_file_path()
+        if arquivo.exists():
+            with open(arquivo, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get(tipo_db, {})
+    except Exception:
+        pass
+    return {}
+
+
+def save_modelo(tipo_db: str, nome_modelo: str, assunto: str, destino: str, obs: str) -> None:
+    arquivo = get_modelos_file_path()
+    try:
+        if arquivo.exists():
+            with open(arquivo, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        else:
+            data = {}
+    except Exception:
+        data = {}
+
+    if tipo_db not in data:
+        data[tipo_db] = {}
+    data[tipo_db][nome_modelo] = {"assunto": assunto, "destino": destino, "obs": obs}
+
+    try:
+        arquivo.parent.mkdir(parents=True, exist_ok=True)
+        with open(arquivo, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        if settings.get_rede_path():
+            loc = settings.LOCAL_DATA_DIR / "modelos_favoritos.json"
+            loc.parent.mkdir(parents=True, exist_ok=True)
+            with open(loc, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"Erro save modelo: {e}")
+
+
+def delete_modelo(tipo_db: str, nome_modelo: str) -> None:
+    arquivo = get_modelos_file_path()
+    try:
+        if arquivo.exists():
+            with open(arquivo, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if tipo_db in data and nome_modelo in data[tipo_db]:
+                del data[tipo_db][nome_modelo]
+                with open(arquivo, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                if settings.get_rede_path():
+                    loc = settings.LOCAL_DATA_DIR / "modelos_favoritos.json"
+                    loc.parent.mkdir(parents=True, exist_ok=True)
+                    with open(loc, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass

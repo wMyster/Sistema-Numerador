@@ -10,6 +10,11 @@ import db
 if __name__ == "__main__":
     db.init_db()
 
+    try:
+        from backup import start_auto_backup
+        start_auto_backup(interval_minutes=15)
+    except: pass
+
     root = tk.Tk()
     root.withdraw() # Esconde a janela principal inicial para previnir fantasmas
     
@@ -30,8 +35,28 @@ if __name__ == "__main__":
 
     # Verifica se o usuario de fato selecionou um e fechou a janela ou se ele apenas deu (X)
     if login.usuario_selecionado:
-        app = NumeradorApp(root, login.usuario_selecionado)
-        root.mainloop()
+        try:
+            app = NumeradorApp(root, login.usuario_selecionado)
+            root.deiconify() # restore a janela principal do tk.Tk (withdraw inicial)
+            
+            # Maximizar a janela na inicialização
+            try:
+                root.state('zoomed')
+            except:
+                pass # Tratamento para SOs onde zoom não é suportado
+                
+            root.mainloop()
+
+            try:
+                from network_lock import release_lock
+                release_lock(login.usuario_selecionado)
+            except: pass
+        except Exception as e:
+            import traceback
+            from tkinter import messagebox
+            root.deiconify()
+            messagebox.showerror("Erro Fatal de Inicialização", f"Crash detectado: {e}\n\n{traceback.format_exc()}")
+            sys.exit(1)
     else:
         # Encerra se apenas clicou no (X) do login
         sys.exit()

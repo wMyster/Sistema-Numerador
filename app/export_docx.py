@@ -1,12 +1,20 @@
 import os
 import shutil
+import datetime
 import db
 from docx import Document
 from docx.shared import Pt, Inches
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
-REDE_OUTPUT_DIR = r"G:\NUMERADORES DADOS\OUTPUT"
+REDE_OUTPUT_DIR = r"G:\NUMERADOR DADOS\OUTPUT"
+
+MESES = {
+    1: "01 - Janeiro", 2: "02 - Fevereiro", 3: "03 - Março",
+    4: "04 - Abril", 5: "05 - Maio", 6: "06 - Junho",
+    7: "07 - Julho", 8: "08 - Agosto", 9: "09 - Setembro",
+    10: "10 - Outubro", 11: "11 - Novembro", 12: "12 - Dezembro"
+}
 
 TITULOS = {
     "OFICIO": "NUMERADOR DE OFÍCIO 2026",
@@ -28,21 +36,28 @@ NOME_UNICO = {
     "CERTIDAO": "Certidão"
 }
 
-def get_active_output_dir():
-    if os.path.exists(r"G:\\"):
-        if not os.path.exists(REDE_OUTPUT_DIR):
-            try: os.makedirs(REDE_OUTPUT_DIR)
-            except: pass
-        if os.path.exists(REDE_OUTPUT_DIR):
-            return REDE_OUTPUT_DIR
+def get_active_output_dir(tipo_db=None):
+    base_out = REDE_OUTPUT_DIR if os.path.exists(r"G:\\") else OUTPUT_DIR
     
-    if not os.path.exists(OUTPUT_DIR):
-        os.makedirs(OUTPUT_DIR)
-    return OUTPUT_DIR
+    hoje = datetime.datetime.now()
+    ano = str(hoje.year)
+    mes = MESES.get(hoje.month, "00 - Desconhecido")
+    
+    if tipo_db:
+        nome_tipo = NOME_UNICO.get(tipo_db, tipo_db)
+        caminho_final = os.path.join(base_out, "Docs Gerados", ano, mes, nome_tipo)
+    else:
+        caminho_final = os.path.join(base_out, "Docs Gerados", ano, mes)
+        
+    if not os.path.exists(caminho_final):
+        try: os.makedirs(caminho_final)
+        except: pass
+        
+    return caminho_final
 
 def exportar_para_docx(tipo):
-    target_dir = get_active_output_dir()
-    file_path = os.path.join(target_dir, f'Numerador_{tipo}_2026.docx')
+    target_dir = get_active_output_dir(tipo)
+    file_path = os.path.join(target_dir, f'Relatorio_{NOME_UNICO.get(tipo, tipo)}_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.docx')
     doc = Document()
     
     sections = doc.sections

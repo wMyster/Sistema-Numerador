@@ -3,5 +3,5 @@
 cd /d "%~dp0"
 
 :: Executa o python mudo e seguro para nao assustar o Antivirus corporativo
-start "" "runtime\python\pythonw.exe" app\main.py
+start "" "runtime\python\pythonw.exe" -m app.main
 exit
