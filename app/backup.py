@@ -8,6 +8,9 @@ from pathlib import Path
 from datetime import datetime
 
 import settings
+from app_logger import get_logger
+
+logger = get_logger(__name__)
 
 _last_db_mtime: float = 0.0
 
@@ -61,11 +64,12 @@ def perform_backup(is_manual: bool = False, max_files: int = 20) -> tuple[bool, 
                 if of_file.name != local_dest_file.name:
                     try:
                         shutil.move(str(of_file), str(dest_dir))
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.warning("Não foi possível mover backup órfão '%s': %s", of_file.name, e)
         
         return True, f"Backup salvo com sucesso!\n\nArquivo: {dest_file.name}"
     except Exception as e:
+        logger.error("Erro crítico ao realizar backup: %s", e, exc_info=True)
         return False, f"Erro crítico ao copiar arquivo para o backup: {e}"
 
 def _cleanup_old_backups(dest_dir: Path, max_files: int = 20):
@@ -99,10 +103,11 @@ def _cleanup_old_backups(dest_dir: Path, max_files: int = 20):
             if f not in protected:
                 try:
                     f.unlink()
-                except:
-                    pass
+                    logger.debug("Backup antigo removido: %s", f.name)
+                except Exception as e:
+                    logger.warning("Não foi possível remover backup antigo '%s': %s", f.name, e)
     except Exception as e:
-        pass
+        logger.error("Erro na limpeza de backups: %s", e, exc_info=True)
 
 def start_auto_backup(interval_minutes: int = 15, max_files: int = 20):
     """
@@ -114,8 +119,8 @@ def start_auto_backup(interval_minutes: int = 15, max_files: int = 20):
         while True:
             try:
                 perform_backup(is_manual=False, max_files=max_files)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("Erro no loop de backup automático: %s", e, exc_info=True)
             time.sleep(interval_minutes * 60)
 
     t = threading.Thread(target=_backup_loop, daemon=True)

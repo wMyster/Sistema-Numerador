@@ -4,6 +4,9 @@ import datetime
 import db
 from docx import Document
 from docx.shared import Pt, Inches
+from app_logger import get_logger
+
+logger = get_logger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
@@ -51,7 +54,8 @@ def get_active_output_dir(tipo_db=None):
         
     if not os.path.exists(caminho_final):
         try: os.makedirs(caminho_final)
-        except: pass
+        except Exception as e:
+            logger.warning("Não foi possível criar diretório de saída '%s': %s", caminho_final, e)
         
     return caminho_final
 
@@ -123,5 +127,6 @@ def exportar_para_docx(tipo):
             row_cells[i].width = width
             
     doc.save(file_path)
+    logger.info("Documento DOCX exportado: %s", file_path)
     return file_path
 

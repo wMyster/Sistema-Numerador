@@ -11,9 +11,13 @@ from pathlib import Path
 from typing import Any, Optional
 
 import settings
+from app_logger import get_logger
+
+logger = get_logger(__name__)
 
 BASE_DIR = settings.PROJECT_ROOT
 NUMERADORES_DIR = os.path.join(BASE_DIR, "Numeradores")
+REDE_DB_PATH = str(settings.get_network_data_dir() / "numerador.sqlite")
 
 
 # ---------------------------------------------------------------------------
@@ -194,11 +198,13 @@ def init_schema(db_path: str) -> None:
 
 
 def init_db() -> None:
+    logger.info("Inicializando banco de dados...")
     local_db = str(settings.LOCAL_DATA_DIR / "numerador.sqlite")
     init_schema(local_db)
     active_path = get_active_db_path()
     if active_path != local_db:
         init_schema(active_path)
+        logger.info("Schema inicializado em local e rede")
 
     # Migração de users legados
     try:
@@ -212,7 +218,8 @@ def init_db() -> None:
                     users_dict.update({"DIRETORIA": "admin", "VIA DCT": "admin"})
                 if not users_dict:
                     users_dict = {"DIRETORIA": "admin", "VIA DCT": "admin"}
-            except Exception:
+            except Exception as e:
+                logger.warning("Erro ao ler usuários do banco: %s", e)
                 users_dict = {"DIRETORIA": "admin", "VIA DCT": "admin"}
 
             users_file.parent.mkdir(parents=True, exist_ok=True)
@@ -224,10 +231,10 @@ def init_db() -> None:
                     con.execute("BEGIN IMMEDIATE")
                     con.execute("DROP TABLE IF EXISTS usuarios")
                     con.commit()
-            except Exception:
-                pass
-    except Exception:
-        pass
+            except Exception as e:
+                logger.warning("Erro ao remover tabela usuarios legada: %s", e)
+    except Exception as e:
+        logger.error("Erro na migração de usuários legados: %s", e, exc_info=True)
 
     # Migração: move obs→usuario em registros antigos
     try:
@@ -242,8 +249,8 @@ def init_db() -> None:
                 """
             )
             con.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error("Erro na migração de obs->usuario: %s", e, exc_info=True)
 
     sincronizar_bancos()
     bootstrap_from_docx_if_empty()
@@ -257,12 +264,12 @@ def fazer_backup() -> None:
     try:
         from backup import perform_backup
         threading.Thread(target=perform_backup, kwargs={"is_manual": False}, daemon=True).start()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error("Erro ao disparar backup em background: %s", e, exc_info=True)
 
 
 def log_debug(msg: str) -> None:
-    pass
+    logger.debug(msg)
 
 
 def sincronizar_bancos() -> None:
@@ -276,9 +283,11 @@ def sincronizar_bancos() -> None:
         elif rede_db.exists() and not local_db.exists():
             settings.LOCAL_DATA_DIR.mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(rede_db), str(local_db))
+            logger.info("Copiado DB da rede para o local.")
         elif local_db.exists() and not rede_db.exists():
             settings.get_network_data_dir().mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(local_db), str(rede_db))
+            logger.info("Copiado DB do local para a rede.")
 
 
 def merge_dbs(db_main: str, db_attached: str) -> None:
@@ -328,8 +337,9 @@ def merge_dbs(db_main: str, db_attached: str) -> None:
                 """
             )
             con.commit()
-    except Exception:
-        pass
+            logger.info("Bancos de dados mesclados: %s <- %s", db_main, db_attached)
+    except Exception as e:
+        logger.error("Erro ao mesclar bancos de dados %s e %s: %s", db_main, db_attached, e, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -352,11 +362,14 @@ def bootstrap_from_docx_if_empty() -> None:
     with open_connection() as con:
         cur = con.execute("SELECT COUNT(*) AS cnt FROM registros WHERE deleted_at IS NULL")
         if cur.fetchone()["cnt"] > 0:
+            logger.info("Banco de dados não está vazio, pulando bootstrap de DOCX.")
             return
 
     if not os.path.exists(NUMERADORES_DIR):
+        logger.warning("Diretório de numeradores DOCX não encontrado: %s", NUMERADORES_DIR)
         return
 
+    logger.info("Iniciando bootstrap de registros a partir de arquivos DOCX legados.")
     for nome_arquivo, tipo_db in mapa.items():
         filepath = os.path.join(NUMERADORES_DIR, nome_arquivo)
         if os.path.exists(filepath):
@@ -372,6 +385,7 @@ def bootstrap_from_docx_if_empty() -> None:
                                 continue
                             numero = int(n_str)
                         except Exception:
+                            logger.warning("Não foi possível converter número de registro para int: %s", cells[0])
                             continue
 
                         placa = data = assunto = destino = obs = ""
@@ -390,11 +404,14 @@ def bootstrap_from_docx_if_empty() -> None:
                         try:
                             insert_registro(tipo_db, numero, placa, data, assunto, destino, obs, "", skip_sync=True)
                         except Exception as e:
-                            log_debug(f"Erro inserindo {tipo_db} - {numero}: {e}")
+                            logger.error("Erro inserindo registro %s - %d do DOCX %s: %s", tipo_db, numero, nome_arquivo, e)
             except Exception as e:
-                log_debug(f"Erro ao ler DOCX {nome_arquivo}: {e}")
+                logger.error("Erro ao ler DOCX %s: %s", nome_arquivo, e, exc_info=True)
+        else:
+            logger.debug("Arquivo DOCX não encontrado: %s", filepath)
 
     sincronizar_bancos()
+    logger.info("Bootstrap de DOCX concluído.")
 
 
 # ---------------------------------------------------------------------------
@@ -409,8 +426,8 @@ def get_all_usuarios() -> list[str]:
             with open(users_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 users = list(data.keys())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("Erro ao carregar usuários do arquivo: %s", e)
     if not users:
         users = ["DIRETORIA"]
     return sorted(users)
@@ -426,8 +443,8 @@ def get_usuario_role(nome: str) -> str:
                 if role == "admin" or nome.upper() in ["DIRETORIA", "VIA DCT"]:
                     return "admin"
                 return "comum"
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error("Erro ao obter role do usuário %s: %s", nome, e)
     return "admin" if nome.upper() in ["DIRETORIA", "VIA DCT"] else "comum"
 
 
@@ -439,22 +456,28 @@ def add_usuario(nome: str, role: str = "comum") -> None:
                 data = json.load(f)
         else:
             data = {"DIRETORIA": "admin", "VIA DCT": "admin"}
-    except Exception:
+    except Exception as e:
+        logger.error("Erro ao carregar dados de usuários para adicionar: %s", e)
         data = {}
 
     data[nome.upper()] = role
     users_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(users_file, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    try:
+        with open(users_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        logger.info("Usuário '%s' adicionado/atualizado com role '%s'.", nome, role)
 
-    if settings.get_rede_path():
-        try:
-            loc = settings.LOCAL_DATA_DIR / "users.json"
-            loc.parent.mkdir(parents=True, exist_ok=True)
-            with open(loc, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-        except Exception:
-            pass
+        if settings.get_rede_path():
+            try:
+                loc = settings.LOCAL_DATA_DIR / "users.json"
+                loc.parent.mkdir(parents=True, exist_ok=True)
+                with open(loc, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                logger.debug("Usuários sincronizados para o local de rede.")
+            except Exception as e:
+                logger.error("Erro ao sincronizar arquivo de usuários para o local de rede: %s", e)
+    except Exception as e:
+        logger.error("Erro ao salvar arquivo de usuários: %s", e)
 
 
 def delete_usuario(nome: str) -> None:
@@ -469,13 +492,17 @@ def delete_usuario(nome: str) -> None:
             del data[nome.upper()]
             with open(users_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
+            logger.info("Usuário '%s' removido.", nome)
             if settings.get_rede_path():
                 loc = settings.LOCAL_DATA_DIR / "users.json"
                 if loc.exists():
                     with open(loc, "w", encoding="utf-8") as f:
                         json.dump(data, f, indent=2, ensure_ascii=False)
-    except Exception:
-        pass
+                    logger.debug("Usuários sincronizados para o local de rede após exclusão.")
+        else:
+            logger.warning("Tentativa de remover usuário inexistente: '%s'", nome)
+    except Exception as e:
+        logger.error("Erro ao remover usuário '%s': %s", nome, e)
 
 
 # ---------------------------------------------------------------------------
@@ -516,6 +543,7 @@ def insert_registro(
         )
         con.commit()
 
+    logger.info("Registro inserido: %s #%d", tipo, numero)
     if not skip_sync:
         sincronizar_bancos()
         fazer_backup()
@@ -542,6 +570,7 @@ def update_registro(
             (placa, data, assunto, destino, obs, usuario, now, id_registro),
         )
         con.commit()
+    logger.info("Registro atualizado (ID: %d)", id_registro)
     sincronizar_bancos()
     fazer_backup()
 
@@ -556,6 +585,7 @@ def delete_registro(id_registro: int) -> None:
             (now, now, id_registro),
         )
         con.commit()
+    logger.info("Registro enviado para lixeira (ID: %d)", id_registro)
     sincronizar_bancos()
     fazer_backup()
 
@@ -570,6 +600,7 @@ def restore_registro(id_registro: int) -> None:
             (now, id_registro),
         )
         con.commit()
+    logger.info("Registro restaurado da lixeira (ID: %d)", id_registro)
     sincronizar_bancos()
     fazer_backup()
 
@@ -580,6 +611,7 @@ def delete_permanente(id_registro: int) -> None:
         con.execute("BEGIN IMMEDIATE")
         con.execute("DELETE FROM registros WHERE id = ?", (id_registro,))
         con.commit()
+    logger.info("Registro excluído permanentemente (ID: %d)", id_registro)
     sincronizar_bancos()
     fazer_backup()
 
@@ -591,6 +623,7 @@ def esvaziar_lixeira() -> int:
         cur = con.execute("DELETE FROM registros WHERE deleted_at IS NOT NULL")
         count = int(cur.rowcount or 0)
         con.commit()
+    logger.info("%d registros excluídos permanentemente da lixeira.", count)
     sincronizar_bancos()
     fazer_backup()
     return count
@@ -633,7 +666,8 @@ def get_all_registros(
                 di = datetime.strptime(data_inicio, "%d/%m/%Y").strftime("%Y-%m-%d")
                 df = datetime.strptime(data_fim, "%d/%m/%Y").strftime("%Y-%m-%d")
                 params.extend([di, df])
-            except Exception:
+            except Exception as e:
+                logger.warning("Erro ao parsear datas de busca '%s' e '%s': %s. Ignorando filtro de data.", data_inicio, data_fim, e)
                 query = query.rsplit(" AND ", 1)[0]
 
         query += " ORDER BY numero DESC"
@@ -721,7 +755,7 @@ def get_estatisticas_dashboard() -> dict:
             if row:
                 stats["usuarios_ativos"] = row["cnt"]
     except Exception as e:
-        print(f"Erro ao buscar estatísticas: {e}")
+        logger.error("Erro ao buscar estatísticas: %s", e, exc_info=True)
 
     return stats
 
@@ -743,7 +777,7 @@ def get_top_destinos(limite: int = 5) -> list:
             )
             return [(str(r["destino"]).strip().title(), r["qtd"]) for r in cur.fetchall()]
     except Exception as e:
-        print(f"Erro top destinos: {e}")
+        logger.error("Erro ao buscar top destinos: %s", e, exc_info=True)
     return []
 
 
@@ -760,8 +794,8 @@ def get_historico_assuntos(limite: int = 30) -> list[str]:
                 (limite,),
             )
             return [r["a"] for r in cur.fetchall()]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error("Erro ao buscar histórico de assuntos: %s", e)
     return []
 
 
@@ -778,8 +812,8 @@ def get_historico_destinos(limite: int = 30) -> list[str]:
                 (limite,),
             )
             return [r["d"] for r in cur.fetchall()]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error("Erro ao buscar histórico de destinos: %s", e)
     return []
 
 
@@ -794,8 +828,9 @@ def get_modelos_file_path() -> Path:
             p.parent.mkdir(parents=True, exist_ok=True)
             with open(p, "w", encoding="utf-8") as f:
                 json.dump({}, f)
-        except Exception:
-            pass
+            logger.info("Arquivo de modelos favoritos criado: %s", p)
+        except Exception as e:
+            logger.error("Erro ao criar arquivo de modelos favoritos: %s", e)
     return p
 
 
@@ -806,8 +841,8 @@ def get_modelos(tipo_db: str) -> dict:
             with open(arquivo, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 return data.get(tipo_db, {})
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error("Erro ao carregar modelos favoritos para tipo '%s': %s", tipo_db, e)
     return {}
 
 
@@ -819,7 +854,8 @@ def save_modelo(tipo_db: str, nome_modelo: str, assunto: str, destino: str, obs:
                 data = json.load(f)
         else:
             data = {}
-    except Exception:
+    except Exception as e:
+        logger.error("Erro ao carregar dados de modelos favoritos para salvar: %s", e)
         data = {}
 
     if tipo_db not in data:
@@ -830,13 +866,15 @@ def save_modelo(tipo_db: str, nome_modelo: str, assunto: str, destino: str, obs:
         arquivo.parent.mkdir(parents=True, exist_ok=True)
         with open(arquivo, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+        logger.info("Modelo favorito '%s' salvo para tipo '%s'.", nome_modelo, tipo_db)
         if settings.get_rede_path():
             loc = settings.LOCAL_DATA_DIR / "modelos_favoritos.json"
             loc.parent.mkdir(parents=True, exist_ok=True)
             with open(loc, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
+            logger.debug("Modelos favoritos sincronizados para o local de rede.")
     except Exception as e:
-        print(f"Erro save modelo: {e}")
+        logger.error("Erro ao salvar modelo favorito: %s", e, exc_info=True)
 
 
 def delete_modelo(tipo_db: str, nome_modelo: str) -> None:

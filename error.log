@@ -1,0 +1,79 @@
+19/03/2026 13:48:03 | INFO     | __main__ | ============================================================
+19/03/2026 13:48:03 | INFO     | __main__ | Iniciando Sistema Único de Numeradores
+19/03/2026 13:48:03 | INFO     | __main__ | Modo debug: ATIVADO
+19/03/2026 13:48:03 | INFO     | __main__ | Mutex adquirido — instância única confirmada
+19/03/2026 13:48:03 | INFO     | db | Inicializando banco de dados...
+19/03/2026 13:48:03 | INFO     | db | Schema inicializado em local e rede
+19/03/2026 13:48:03 | INFO     | db | Bancos de dados mesclados: G:\NUMERADOR DADOS\data\numerador.sqlite <- C:\Users\wmyst\GitHub\Sistema Numerador\data\numerador.sqlite
+19/03/2026 13:48:03 | INFO     | db | Bancos de dados mesclados: C:\Users\wmyst\GitHub\Sistema Numerador\data\numerador.sqlite <- G:\NUMERADOR DADOS\data\numerador.sqlite
+19/03/2026 13:48:03 | INFO     | db | Banco de dados não está vazio, pulando bootstrap de DOCX.
+19/03/2026 13:48:03 | INFO     | __main__ | Banco de dados inicializado com sucesso
+19/03/2026 13:48:17 | INFO     | __main__ | Usuário logado: BIANCA
+19/03/2026 13:48:17 | CRITICAL | __main__ | Erro fatal na aplicação: module 'db' has no attribute 'REDE_DB_PATH'
+Traceback (most recent call last):
+  File "C:\Users\wmyst\GitHub\Sistema Numerador\app\main.py", line 93, in <module>
+    app = NumeradorApp(root, login.usuario_selecionado)
+  File "C:\Users\wmyst\GitHub\Sistema Numerador\app\ui.py", line 569, in __init__
+    tab = TabNumerador(self.notebook, self, tipo_db, titulo_aba)
+  File "C:\Users\wmyst\GitHub\Sistema Numerador\app\ui.py", line 150, in __init__
+    self.build_ui()
+    ~~~~~~~~~~~~~^^
+  File "C:\Users\wmyst\GitHub\Sistema Numerador\app\ui.py", line 245, in build_ui
+    banco_mode = "REDE (G:)" if db.get_active_db_path() == db.REDE_DB_PATH else "LOCAL (Fallback)"
+                                                           ^^^^^^^^^^^^^^^
+AttributeError: module 'db' has no attribute 'REDE_DB_PATH'
+19/03/2026 13:48:17 | INFO     | __main__ | Aplicação encerrada
+19/03/2026 13:49:50 | INFO     | __main__ | ============================================================
+19/03/2026 13:49:50 | INFO     | __main__ | Iniciando Sistema Único de Numeradores
+19/03/2026 13:49:50 | INFO     | __main__ | Modo debug: ATIVADO
+19/03/2026 13:49:50 | INFO     | __main__ | Mutex adquirido — instância única confirmada
+19/03/2026 13:49:50 | INFO     | db | Inicializando banco de dados...
+19/03/2026 13:49:50 | INFO     | db | Schema inicializado em local e rede
+19/03/2026 13:49:50 | INFO     | db | Bancos de dados mesclados: G:\NUMERADOR DADOS\DATA\numerador.sqlite <- C:\Users\wmyst\GitHub\Sistema Numerador\data\numerador.sqlite
+19/03/2026 13:49:50 | INFO     | db | Bancos de dados mesclados: C:\Users\wmyst\GitHub\Sistema Numerador\data\numerador.sqlite <- G:\NUMERADOR DADOS\DATA\numerador.sqlite
+19/03/2026 13:49:50 | INFO     | db | Banco de dados não está vazio, pulando bootstrap de DOCX.
+19/03/2026 13:49:50 | INFO     | __main__ | Banco de dados inicializado com sucesso
+19/03/2026 13:49:58 | INFO     | __main__ | Usuário logado: BIANCA
+19/03/2026 13:49:58 | CRITICAL | __main__ | Erro fatal na aplicação: module 'db' has no attribute 'REDE_DB_PATH'
+Traceback (most recent call last):
+  File "C:\Users\wmyst\GitHub\Sistema Numerador\app\main.py", line 93, in <module>
+    app = NumeradorApp(root, login.usuario_selecionado)
+  File "C:\Users\wmyst\GitHub\Sistema Numerador\app\ui.py", line 569, in __init__
+    tab = TabNumerador(self.notebook, self, tipo_db, titulo_aba)
+  File "C:\Users\wmyst\GitHub\Sistema Numerador\app\ui.py", line 150, in __init__
+    self.build_ui()
+    ~~~~~~~~~~~~~^^
+  File "C:\Users\wmyst\GitHub\Sistema Numerador\app\ui.py", line 245, in build_ui
+    banco_mode = "REDE (G:)" if db.get_active_db_path() == db.REDE_DB_PATH else "LOCAL (Fallback)"
+                                                           ^^^^^^^^^^^^^^^
+AttributeError: module 'db' has no attribute 'REDE_DB_PATH'
+19/03/2026 13:49:58 | INFO     | __main__ | Aplicação encerrada
+19/03/2026 13:50:44 | INFO     | __main__ | ============================================================
+19/03/2026 13:50:44 | INFO     | __main__ | Iniciando Sistema Único de Numeradores
+19/03/2026 13:50:44 | INFO     | __main__ | Modo debug: ATIVADO
+19/03/2026 13:50:44 | INFO     | __main__ | Mutex adquirido — instância única confirmada
+19/03/2026 13:50:44 | INFO     | db | Inicializando banco de dados...
+19/03/2026 13:50:44 | INFO     | db | Schema inicializado em local e rede
+19/03/2026 13:50:44 | INFO     | db | Bancos de dados mesclados: G:\NUMERADOR DADOS\DATA\numerador.sqlite <- C:\Users\wmyst\GitHub\Sistema Numerador\data\numerador.sqlite
+19/03/2026 13:50:44 | INFO     | db | Bancos de dados mesclados: C:\Users\wmyst\GitHub\Sistema Numerador\data\numerador.sqlite <- G:\NUMERADOR DADOS\DATA\numerador.sqlite
+19/03/2026 13:50:44 | INFO     | db | Banco de dados não está vazio, pulando bootstrap de DOCX.
+19/03/2026 13:50:44 | INFO     | __main__ | Banco de dados inicializado com sucesso
+19/03/2026 13:50:46 | INFO     | __main__ | Usuário logado: BIANCA
+19/03/2026 13:50:46 | INFO     | db | Bancos de dados mesclados: G:\NUMERADOR DADOS\DATA\numerador.sqlite <- C:\Users\wmyst\GitHub\Sistema Numerador\data\numerador.sqlite
+19/03/2026 13:50:46 | INFO     | db | Bancos de dados mesclados: C:\Users\wmyst\GitHub\Sistema Numerador\data\numerador.sqlite <- G:\NUMERADOR DADOS\DATA\numerador.sqlite
+19/03/2026 13:50:46 | DEBUG    | backup | Backup antigo removido: numerador_backup_2026_02_27_092558.sqlite
+19/03/2026 13:50:46 | DEBUG    | backup | Backup antigo removido: numerador_backup_2026_02_27_081619.sqlite
+19/03/2026 13:50:46 | WARNING  | backup | Não foi possível mover backup órfão 'numerador_backup_2026_03_10_101821.sqlite': Destination path 'G:\NUMERADOR DADOS\BACKUPS\numerador_backup_2026_03_10_101821.sqlite' already exists
+19/03/2026 13:50:46 | WARNING  | backup | Não foi possível mover backup órfão 'numerador_backup_2026_03_10_102140.sqlite': Destination path 'G:\NUMERADOR DADOS\BACKUPS\numerador_backup_2026_03_10_102140.sqlite' already exists
+19/03/2026 13:50:46 | WARNING  | backup | Não foi possível mover backup órfão 'numerador_backup_2026_03_10_102141.sqlite': Destination path 'G:\NUMERADOR DADOS\BACKUPS\numerador_backup_2026_03_10_102141.sqlite' already exists
+19/03/2026 13:50:46 | WARNING  | backup | Não foi possível mover backup órfão 'numerador_backup_2026_03_10_102214.sqlite': Destination path 'G:\NUMERADOR DADOS\BACKUPS\numerador_backup_2026_03_10_102214.sqlite' already exists
+19/03/2026 13:50:46 | WARNING  | backup | Não foi possível mover backup órfão 'numerador_backup_2026_03_10_102258.sqlite': Destination path 'G:\NUMERADOR DADOS\BACKUPS\numerador_backup_2026_03_10_102258.sqlite' already exists
+19/03/2026 13:50:46 | WARNING  | backup | Não foi possível mover backup órfão 'numerador_backup_2026_03_10_103350.sqlite': Destination path 'G:\NUMERADOR DADOS\BACKUPS\numerador_backup_2026_03_10_103350.sqlite' already exists
+19/03/2026 13:50:46 | WARNING  | backup | Não foi possível mover backup órfão 'numerador_backup_2026_03_10_103351.sqlite': Destination path 'G:\NUMERADOR DADOS\BACKUPS\numerador_backup_2026_03_10_103351.sqlite' already exists
+19/03/2026 13:50:46 | WARNING  | backup | Não foi possível mover backup órfão 'numerador_backup_2026_03_10_103949.sqlite': Destination path 'G:\NUMERADOR DADOS\BACKUPS\numerador_backup_2026_03_10_103949.sqlite' already exists
+19/03/2026 13:50:46 | WARNING  | backup | Não foi possível mover backup órfão 'numerador_backup_2026_03_10_104831.sqlite': Destination path 'G:\NUMERADOR DADOS\BACKUPS\numerador_backup_2026_03_10_104831.sqlite' already exists
+19/03/2026 13:50:46 | WARNING  | backup | Não foi possível mover backup órfão 'numerador_backup_2026_03_10_104918.sqlite': Destination path 'G:\NUMERADOR DADOS\BACKUPS\numerador_backup_2026_03_10_104918.sqlite' already exists
+19/03/2026 13:50:46 | WARNING  | backup | Não foi possível mover backup órfão 'numerador_backup_2026_03_10_120542.sqlite': Destination path 'G:\NUMERADOR DADOS\BACKUPS\numerador_backup_2026_03_10_120542.sqlite' already exists
+19/03/2026 13:50:46 | WARNING  | backup | Não foi possível mover backup órfão 'numerador_backup_2026_03_12_093846.sqlite': Destination path 'G:\NUMERADOR DADOS\BACKUPS\numerador_backup_2026_03_12_093846.sqlite' already exists
+19/03/2026 13:50:46 | WARNING  | backup | Não foi possível mover backup órfão 'numerador_backup_2026_03_12_111032.sqlite': Destination path 'G:\NUMERADOR DADOS\BACKUPS\numerador_backup_2026_03_12_111032.sqlite' already exists
+19/03/2026 13:51:24 | INFO     | __main__ | Aplicação encerrada
