@@ -13,7 +13,7 @@ from app_logger import setup_logging, get_logger
 setup_logging(console=_DEBUG_MODE)
 logger = get_logger(__name__)
 
-from ui import NumeradorApp, LoginDialog
+from ui import NumeradorApp, show_login
 import db
 
 if __name__ == "__main__":
@@ -21,7 +21,7 @@ if __name__ == "__main__":
     logger.info("Iniciando Sistema Único de Numeradores")
     logger.info("Modo debug: %s", "ATIVADO" if _DEBUG_MODE else "DESATIVADO")
 
-    # Prevenção de múltiplas instâncias via Mutex do Windows
+    # Prevenção de múltiplas instâncias via Mutex do Windows (Essencial para Rede)
     try:
         import ctypes
         import time
@@ -45,6 +45,7 @@ if __name__ == "__main__":
             logger.warning("Outra instância já está em execução. Encerrando.")
             try:
                 from tkinter import messagebox
+                import tkinter as tk
                 root = tk.Tk()
                 root.withdraw()
                 messagebox.showwarning(
@@ -60,7 +61,7 @@ if __name__ == "__main__":
         logger.info("Mutex adquirido — instância única confirmada")
     except Exception as e:
         logger.error("Erro ao verificar mutex: %s", e, exc_info=True)
-
+    
     try:
         db.init_db()
         logger.info("Banco de dados inicializado com sucesso")
@@ -68,30 +69,14 @@ if __name__ == "__main__":
         logger.critical("Falha ao inicializar banco de dados: %s", e, exc_info=True)
         sys.exit(1)
 
-    root = tk.Tk()
-    root.withdraw()  # Esconde a janela principal inicial para previnir fantasmas
-    
-    # Aplicando tema visual, se disponivel
-    try:
-        from tkinter import ttk
-        style = ttk.Style()
-        if 'vista' in style.theme_names():
-            style.theme_use('vista')
-        elif 'winnative' in style.theme_names():
-            style.theme_use('winnative')
-    except Exception as e:
-        logger.debug("Tema visual não disponível: %s", e)
+    # NOVO FLUXO CTK
+    usuario = show_login()
 
-    # Exibe o dialogo de login travando o fluxo
-    login = LoginDialog(root)
-    root.wait_window(login)
-
-    # Verifica se o usuario de fato selecionou um e fechou a janela ou se ele apenas deu (X)
-    if login.usuario_selecionado:
-        logger.info("Usuário logado: %s", login.usuario_selecionado)
+    if usuario:
+        logger.info("Usuário logado: %s", usuario)
         try:
-            app = NumeradorApp(root, login.usuario_selecionado)
-            root.mainloop()
+            app = NumeradorApp(usuario)
+            app.mainloop()
         except Exception as e:
             logger.critical("Erro fatal na aplicação: %s", e, exc_info=True)
             raise

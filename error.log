@@ -77,3 +77,79 @@ AttributeError: module 'db' has no attribute 'REDE_DB_PATH'
 19/03/2026 13:50:46 | WARNING  | backup | Não foi possível mover backup órfão 'numerador_backup_2026_03_12_093846.sqlite': Destination path 'G:\NUMERADOR DADOS\BACKUPS\numerador_backup_2026_03_12_093846.sqlite' already exists
 19/03/2026 13:50:46 | WARNING  | backup | Não foi possível mover backup órfão 'numerador_backup_2026_03_12_111032.sqlite': Destination path 'G:\NUMERADOR DADOS\BACKUPS\numerador_backup_2026_03_12_111032.sqlite' already exists
 19/03/2026 13:51:24 | INFO     | __main__ | Aplicação encerrada
+20/03/2026 09:43:46 | INFO     | __main__ | ============================================================
+20/03/2026 09:43:46 | INFO     | __main__ | Iniciando Sistema Único de Numeradores
+20/03/2026 09:43:46 | INFO     | __main__ | Modo debug: ATIVADO
+20/03/2026 09:43:46 | INFO     | __main__ | Mutex adquirido — instância única confirmada
+20/03/2026 09:43:46 | INFO     | db | Inicializando banco de dados...
+20/03/2026 09:43:46 | INFO     | db | Banco de dados não está vazio, pulando bootstrap de DOCX.
+20/03/2026 09:43:46 | INFO     | __main__ | Banco de dados inicializado com sucesso
+20/03/2026 09:43:55 | INFO     | __main__ | Usuário logado: BIANCA
+20/03/2026 09:44:58 | INFO     | __main__ | Aplicação encerrada
+20/03/2026 09:59:48 | INFO     | __main__ | ============================================================
+20/03/2026 09:59:48 | INFO     | __main__ | Iniciando Sistema Único de Numeradores
+20/03/2026 09:59:48 | INFO     | __main__ | Modo debug: DESATIVADO
+20/03/2026 09:59:48 | INFO     | __main__ | Mutex adquirido — instância única confirmada
+20/03/2026 09:59:48 | INFO     | db | Inicializando banco de dados...
+20/03/2026 09:59:48 | INFO     | db | Banco de dados não está vazio, pulando bootstrap de DOCX.
+20/03/2026 09:59:48 | INFO     | __main__ | Banco de dados inicializado com sucesso
+20/03/2026 10:00:12 | INFO     | __main__ | Usuário logado: BIANCA
+20/03/2026 10:00:13 | CRITICAL | __main__ | Erro fatal na aplicação: TabRelatorios.load_data() got an unexpected keyword argument 'silent'
+Traceback (most recent call last):
+  File "C:\Users\wmyst\GitHub\Sistema Numerador\app\main.py", line 78, in <module>
+    app = NumeradorApp(usuario)
+  File "C:\Users\wmyst\GitHub\Sistema Numerador\app\ui.py", line 407, in __init__
+    self.show_page("DASHBOARD")
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\wmyst\GitHub\Sistema Numerador\app\ui.py", line 448, in show_page
+    self.pages[key].load_data(silent=True)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+TypeError: TabRelatorios.load_data() got an unexpected keyword argument 'silent'
+20/03/2026 10:00:13 | INFO     | __main__ | Aplicação encerrada
+20/03/2026 10:00:33 | INFO     | __main__ | ============================================================
+20/03/2026 10:00:33 | INFO     | __main__ | Iniciando Sistema Único de Numeradores
+20/03/2026 10:00:33 | INFO     | __main__ | Modo debug: ATIVADO
+20/03/2026 10:00:33 | INFO     | __main__ | Mutex adquirido — instância única confirmada
+20/03/2026 10:00:33 | INFO     | db | Inicializando banco de dados...
+20/03/2026 10:00:33 | INFO     | db | Banco de dados não está vazio, pulando bootstrap de DOCX.
+20/03/2026 10:00:33 | INFO     | __main__ | Banco de dados inicializado com sucesso
+20/03/2026 10:00:42 | INFO     | __main__ | Usuário logado: BIANCA
+20/03/2026 10:00:43 | CRITICAL | __main__ | Erro fatal na aplicação: TabRelatorios.load_data() got an unexpected keyword argument 'silent'
+Traceback (most recent call last):
+  File "C:\Users\wmyst\GitHub\Sistema Numerador\app\main.py", line 78, in <module>
+    app = NumeradorApp(usuario)
+  File "C:\Users\wmyst\GitHub\Sistema Numerador\app\ui.py", line 407, in __init__
+    self.show_page("DASHBOARD")
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\wmyst\GitHub\Sistema Numerador\app\ui.py", line 448, in show_page
+    self.pages[key].load_data(silent=True)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+TypeError: TabRelatorios.load_data() got an unexpected keyword argument 'silent'
+20/03/2026 10:00:43 | INFO     | __main__ | Aplicação encerrada
+20/03/2026 10:02:37 | INFO     | __main__ | ============================================================
+20/03/2026 10:02:37 | INFO     | __main__ | Iniciando Sistema Único de Numeradores
+20/03/2026 10:02:37 | INFO     | __main__ | Modo debug: ATIVADO
+20/03/2026 10:02:37 | INFO     | __main__ | Mutex adquirido — instância única confirmada
+20/03/2026 10:02:37 | INFO     | db | Inicializando banco de dados...
+20/03/2026 10:02:37 | INFO     | db | Banco de dados não está vazio, pulando bootstrap de DOCX.
+20/03/2026 10:02:37 | INFO     | __main__ | Banco de dados inicializado com sucesso
+20/03/2026 10:02:40 | INFO     | __main__ | Usuário logado: BIANCA
+20/03/2026 10:02:50 | INFO     | __main__ | Aplicação encerrada
+20/03/2026 10:15:18 | INFO     | __main__ | ============================================================
+20/03/2026 10:15:18 | INFO     | __main__ | Iniciando Sistema Único de Numeradores
+20/03/2026 10:15:18 | INFO     | __main__ | Modo debug: ATIVADO
+20/03/2026 10:15:18 | INFO     | __main__ | Mutex adquirido — instância única confirmada
+20/03/2026 10:15:18 | INFO     | db | Inicializando banco de dados...
+20/03/2026 10:15:18 | INFO     | db | Banco de dados não está vazio, pulando bootstrap de DOCX.
+20/03/2026 10:15:18 | INFO     | __main__ | Banco de dados inicializado com sucesso
+20/03/2026 10:16:39 | INFO     | __main__ | Usuário logado: DIRETORIA
+20/03/2026 10:16:57 | INFO     | __main__ | Aplicação encerrada
+20/03/2026 10:18:15 | INFO     | __main__ | ============================================================
+20/03/2026 10:18:15 | INFO     | __main__ | Iniciando Sistema Único de Numeradores
+20/03/2026 10:18:15 | INFO     | __main__ | Modo debug: ATIVADO
+20/03/2026 10:18:15 | INFO     | __main__ | Mutex adquirido — instância única confirmada
+20/03/2026 10:18:15 | INFO     | db | Inicializando banco de dados...
+20/03/2026 10:18:15 | INFO     | db | Banco de dados não está vazio, pulando bootstrap de DOCX.
+20/03/2026 10:18:15 | INFO     | __main__ | Banco de dados inicializado com sucesso
+20/03/2026 10:19:45 | INFO     | __main__ | Usuário logado: BIANCA
+20/03/2026 10:20:00 | INFO     | __main__ | Aplicação encerrada

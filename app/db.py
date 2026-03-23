@@ -28,16 +28,34 @@ def get_active_db_path() -> str:
     return str(settings.get_db_path())
 
 
+import time
+
 def connect() -> sqlite3.Connection:
-    """Cria uma conexão com o banco SQLite com configurações padronizadas."""
+    """
+    Cria uma conexão com o banco SQLite preparada contra travamentos na rede SMB.
+    """
     db_path = settings.get_db_path()
     db_dir = os.path.dirname(db_path)
     if not os.path.exists(db_dir):
         os.makedirs(db_dir)
-    con = sqlite3.connect(str(db_path), timeout=10)
-    con.row_factory = sqlite3.Row
-    con.execute("PRAGMA foreign_keys = ON")
-    return con
+        
+    last_error = None
+    for attempt in range(6): # Tenta por até ~3 segundos
+        try:
+            con = sqlite3.connect(str(db_path), timeout=30)
+            con.row_factory = sqlite3.Row
+            con.execute("PRAGMA foreign_keys = ON")
+            
+            # TRUNCATE funciona bem em redes SMB, evitando conflitos de arquivos auxiliares (shm/wal)
+            con.execute("PRAGMA journal_mode = TRUNCATE")
+            con.execute("PRAGMA synchronous = NORMAL")
+            return con
+        except sqlite3.OperationalError as e:
+            last_error = e
+            time.sleep(0.5)
+            
+    logger.error("Database was locked. Failed after 6 fallback attempts. Error: %s", last_error)
+    raise sqlite3.OperationalError(f"O arquivo de dados está travado pela rede. Tente de novo. ({last_error})")
 
 
 @contextmanager
@@ -175,12 +193,31 @@ def init_schema(db_path: str) -> None:
             },
         )
 
+        # Tabela de contadores para evitar duplicidade em rede
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS numerador_counters (
+                tipo        TEXT    NOT NULL PRIMARY KEY,
+                next_number INTEGER NOT NULL
+            )
+            """
+        )
+
         # Índices de performance
         con.execute("CREATE INDEX IF NOT EXISTS idx_registros_tipo     ON registros(tipo)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_registros_deleted  ON registros(deleted_at)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_registros_data     ON registros(data)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_registros_usuario  ON registros(usuario)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_auditoria_data_hora ON auditoria(data_hora)")
+        
+        # Garante unicidade ativa (não deletada)
+        con.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_registros_tipo_numero_active 
+            ON registros(tipo, numero) 
+            WHERE deleted_at IS NULL
+            """
+        )
 
         # Limpeza de registros sem dados úteis (migração legada)
         con.execute(
@@ -509,19 +546,60 @@ def delete_usuario(nome: str) -> None:
 # Registros — operações principais
 # ---------------------------------------------------------------------------
 
-def get_proximo_numero(tipo: str) -> int:
+# ---------------------------------------------------------------------------
+# Sistema de Reserva de Numeração (Anti-Colisão)
+# ---------------------------------------------------------------------------
+
+def _peek_next_number(con: sqlite3.Connection, tipo: str) -> int:
+    """Calcula o próximo número sugerido sem reservá-lo."""
+    # Primeiro olha o maior número real no banco
+    cur = con.execute(
+        "SELECT MAX(numero) AS mx FROM registros WHERE tipo = ? AND deleted_at IS NULL",
+        (tipo,),
+    )
+    db_max = cur.fetchone()["mx"]
+    computed = (db_max + 1) if db_max is not None else 1
+    
+    # Depois confere se o contador de reserva está mais adiantado
+    row = con.execute(
+        "SELECT next_number FROM numerador_counters WHERE tipo = ?",
+        (tipo,)
+    ).fetchone()
+    
+    if not row:
+        return computed
+    return max(computed, int(row["next_number"]))
+
+
+def peek_proximo_numero(tipo: str) -> int:
+    """Uso público para sugestão na UI."""
     with open_connection() as con:
-        cur = con.execute(
-            "SELECT MAX(numero) AS mx FROM registros WHERE tipo = ? AND deleted_at IS NULL",
-            (tipo,),
-        )
-        row = cur.fetchone()
-        return (row["mx"] + 1) if row["mx"] is not None else 1
+        return _peek_next_number(con, tipo)
+
+
+def reserve_next_number(tipo: str, con: sqlite3.Connection) -> int:
+    """Reserva e retorna o próximo número disponível dentro de uma transação."""
+    next_num = _peek_next_number(con, tipo)
+    
+    con.execute(
+        """
+        INSERT INTO numerador_counters (tipo, next_number)
+        VALUES (?, ?)
+        ON CONFLICT(tipo) DO UPDATE SET next_number = ?
+        """,
+        (tipo, next_num + 1, next_num + 1)
+    )
+    return next_num
+
+
+def get_proximo_numero(tipo: str) -> int:
+    """Mantido para compatibilidade, agora usa o peek."""
+    return peek_proximo_numero(tipo)
 
 
 def insert_registro(
     tipo: str,
-    numero: int,
+    numero: Optional[int],
     placa: str,
     data: str,
     assunto: str,
@@ -529,24 +607,64 @@ def insert_registro(
     obs: str,
     usuario: str,
     skip_sync: bool = False,
-) -> None:
+    con: Optional[sqlite3.Connection] = None
+) -> int:
+    """
+    Insere um registro garantindo a numeração correta.
+    Se numero for None, reserva o próximo disponível automaticamente.
+    """
     now = datetime.now().isoformat()
-    with open_connection() as con:
-        con.execute("BEGIN IMMEDIATE")
+    own_con = con is None
+    if own_con:
+        con = connect()
+    
+    assert con is not None
+    try:
+        if own_con:
+            con.execute("BEGIN IMMEDIATE")
+            
+        # Se não enviou número, reserva agora
+        if numero is None:
+            numero = reserve_next_number(tipo, con)
+            
         con.execute(
             """
-            INSERT OR IGNORE INTO registros
+            INSERT INTO registros
                 (tipo, numero, placa, data, assunto, destino, obs, usuario, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (tipo, numero, placa, data, assunto, destino, obs, usuario, now, now),
         )
-        con.commit()
-
-    logger.info("Registro inserido: %s #%d", tipo, numero)
-    if not skip_sync:
-        sincronizar_bancos()
-        fazer_backup()
+        
+        # Garante que o contador esteja sincronizado caso o número tenha sido manual
+        con.execute(
+            """
+            INSERT INTO numerador_counters (tipo, next_number)
+            VALUES (?, ?)
+            ON CONFLICT(tipo) DO UPDATE SET 
+                next_number = MAX(next_number, excluded.next_number)
+            """,
+            (tipo, numero + 1)
+        )
+        
+        if own_con:
+            con.commit()
+            
+        logger.info("Registro inserido: %s #%d", tipo, numero)
+        if not skip_sync:
+            # Sync e backup rodam fora da transação principal
+            threading.Thread(target=sincronizar_bancos, daemon=True).start()
+            threading.Thread(target=fazer_backup, daemon=True).start()
+            
+        return numero
+        
+    except Exception:
+        if own_con:
+            con.rollback()
+        raise
+    finally:
+        if own_con:
+            con.close()
 
 
 def update_registro(
@@ -677,6 +795,14 @@ def get_all_registros(
 
         cur = con.execute(query, tuple(params))
         return cur.fetchall()
+
+def get_registro_by_id(tipo: str, id_registro: int) -> Optional[sqlite3.Row]:
+    with open_connection() as con:
+        cur = con.execute(
+            "SELECT id, numero, placa, data, assunto, destino, obs, usuario FROM registros WHERE id = ?",
+            (id_registro,)
+        )
+        return cur.fetchone()
 
 
 def list_lixeira(tipo: str | None = None, limit: int = 200) -> list:
